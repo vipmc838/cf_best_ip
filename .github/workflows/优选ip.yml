@@ -7,6 +7,11 @@ on:
   # 允许通过网页手动触发
   workflow_dispatch:
 
+# 设置工作流权限
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   scrape_and_parse:
     runs-on: ubuntu-latest
@@ -54,10 +59,10 @@ jobs:
                         return { bestIp: {}, fullData: [] };
                     }
 
-                    const fullData = [];
+                    const fullData = {};
                     const ipMetrics = []; 
-                    // 定义所有列名，确保索引正确
-                    const headers = ["#", "线路", "优选IP", "丢包", "延迟", "速度", "带宽", "Colo链接", "时间"];
+                    // 定义所有列名，确保索引正确（包含Colo列但不保存）
+                    const headers = ["#", "线路", "优选IP", "丢包", "延迟", "速度", "带宽", "Colo", "时间"];
 
                     $table.find("tr").slice(1).each((i, element) => {
                         const rowData = {};
@@ -68,12 +73,8 @@ jobs:
                             const header = headers[j];
                             let value = $(td).text().trim();
                             
-                            if (header === "Colo链接") {
-                                // 提取链接
-                                const $a = $(td).find("a");
-                                value = $a.attr("href") || value; 
-                                rowData["Colo链接"] = value;
-                            } else if (header) {
+                            // 跳过Colo列，不保存到数据中
+                            if (header && header !== "Colo") {
                                 rowData[header] = value;
                             }
 
@@ -88,7 +89,13 @@ jobs:
                         });
                         
                         delete rowData["#"]; // 移除行号
-                        fullData.push(rowData);
+                        
+                        // 按线路分组数据
+                        const lineType = rowData["线路"];
+                        if (!fullData[lineType]) {
+                            fullData[lineType] = [];
+                        }
+                        fullData[lineType].push({ ...rowData, ...rowMetrics });
                         
                         // 只比较丢包率为 0.00% 的IP
                         if (rowData["丢包"] === "0.00%") {
@@ -115,6 +122,19 @@ jobs:
                         };
                     }
 
+                    // 为每个线路内的IP按延迟排序
+                    for (const lineType in fullData) {
+                        fullData[lineType].sort((a, b) => {
+                            if (a.latency !== b.latency) return a.latency - b.latency;
+                            return b.speed - a.speed;
+                        });
+                        // 移除排序用的临时字段
+                        fullData[lineType].forEach(item => {
+                            delete item.latency;
+                            delete item.speed;
+                        });
+                    }
+
                     return { bestIp, fullData };
                 } catch (error) {
                     console.error("运行错误:", error.message);
@@ -125,12 +145,13 @@ jobs:
             async function main() {
                 const { bestIp, fullData } = await fetchAndParseData();
 
-                if (fullData.length === 0) {
+                if (Object.keys(fullData).length === 0) {
                     console.log("未解析到有效数据。");
                     return;
                 }
                 
                 const finalOutput = {
+                    "生成时间": new Date().toISOString(),
                     "最优IP推荐": bestIp,
                     "完整数据列表": fullData
                 };
@@ -167,6 +188,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "CI: 自动更新 Cloudflare 优选 IP 数据"
-          files: ${{ env.OUTPUT_FILE }}
+          file_pattern: ${{ env.OUTPUT_FILE }}
+          add_options: "--all --force"
         # 仅在脚本成功运行并产生输出文件后执行提交
         if: success()
