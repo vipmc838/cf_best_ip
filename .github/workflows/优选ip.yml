@@ -1,0 +1,172 @@
+name: Cloudflare IP 优选抓取与解析
+
+on:
+  # 每两小时自动运行一次
+  schedule:
+    - cron: '0 */2 * * *' 
+  # 允许通过网页手动触发
+  workflow_dispatch:
+
+jobs:
+  scrape_and_parse:
+    runs-on: ubuntu-latest
+    
+    env:
+      OUTPUT_FILE: cloudflare_bestip_ranking.json
+      
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js 环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 安装依赖 (axios, cheerio)
+        run: |
+          npm install axios cheerio
+          
+      - name: 运行网页抓取、解析和输出脚本
+        id: parser
+        # 完整的 Node.js 脚本直接内联在此运行
+        run: |
+          node -e '
+            const axios = require("axios");
+            const cheerio = require("cheerio");
+            const fs = require("fs");
+
+            const TARGET_URL = "https://api.uouin.com/cloudflare.html";
+            const OUTPUT_FILE = process.env.OUTPUT_FILE;
+            const GITHUB_OUTPUT = process.env.GITHUB_OUTPUT; 
+
+            async function fetchAndParseData() {
+                try {
+                    const response = await axios.get(TARGET_URL, {
+                        headers: { "User-Agent": "GitHubActionsBot/1.0" },
+                        timeout: 15000
+                    });
+                    const $ = cheerio.load(response.data);
+                    const $table = $("table.table.table-striped");
+                    
+                    if ($table.length === 0) {
+                        console.error("错误: 未找到目标表格。");
+                        return { bestIp: {}, fullData: [] };
+                    }
+
+                    const fullData = [];
+                    const ipMetrics = []; 
+                    // 定义所有列名，确保索引正确
+                    const headers = ["#", "线路", "优选IP", "丢包", "延迟", "速度", "带宽", "Colo链接", "时间"];
+
+                    $table.find("tr").slice(1).each((i, element) => {
+                        const rowData = {};
+                        const rowMetrics = {};
+                        const $tds = $(element).find("th, td");
+                        
+                        $tds.each((j, td) => {
+                            const header = headers[j];
+                            let value = $(td).text().trim();
+                            
+                            if (header === "Colo链接") {
+                                // 提取链接
+                                const $a = $(td).find("a");
+                                value = $a.attr("href") || value; 
+                                rowData["Colo链接"] = value;
+                            } else if (header) {
+                                rowData[header] = value;
+                            }
+
+                            // 提取数值用于排序计算
+                            if (header === "延迟") {
+                                const latency = parseFloat(value.replace("ms", ""));
+                                if (!isNaN(latency)) rowMetrics.latency = latency;
+                            } else if (header === "速度") {
+                                const speed = parseFloat(value.replace("mb/s", ""));
+                                if (!isNaN(speed)) rowMetrics.speed = speed;
+                            }
+                        });
+                        
+                        delete rowData["#"]; // 移除行号
+                        fullData.push(rowData);
+                        
+                        // 只比较丢包率为 0.00% 的IP
+                        if (rowData["丢包"] === "0.00%") {
+                            ipMetrics.push({ ...rowData, ...rowMetrics });
+                        }
+                    });
+
+                    let bestIp = {};
+                    if (ipMetrics.length > 0) {
+                        // 排序：延迟升序，速度降序
+                        ipMetrics.sort((a, b) => {
+                            if (a.latency !== b.latency) return a.latency - b.latency;
+                            return b.speed - a.speed;
+                        });
+                        
+                        const bestRow = ipMetrics[0];
+                        bestIp = {
+                            "最优线路": bestRow["线路"],
+                            "最优IP": bestRow["优选IP"],
+                            "最低延迟": bestRow["延迟"],
+                            "最高速度": bestRow["速度"],
+                            "带宽": bestRow["带宽"],
+                            "测试时间": bestRow["时间"]
+                        };
+                    }
+
+                    return { bestIp, fullData };
+                } catch (error) {
+                    console.error("运行错误:", error.message);
+                    return { bestIp: {}, fullData: [] };
+                }
+            }
+
+            async function main() {
+                const { bestIp, fullData } = await fetchAndParseData();
+
+                if (fullData.length === 0) {
+                    console.log("未解析到有效数据。");
+                    return;
+                }
+                
+                const finalOutput = {
+                    "最优IP推荐": bestIp,
+                    "完整数据列表": fullData
+                };
+
+                // 写入完整的 JSON 文件
+                fs.writeFileSync(OUTPUT_FILE, JSON.stringify(finalOutput, null, 4), "utf8");
+                console.log(`结果已保存到 ${OUTPUT_FILE}`);
+                
+                // 将最优 IP 信息写入 GITHUB_OUTPUT 供后续步骤使用
+                const bestIpJsonOutput = JSON.stringify(bestIp);
+                fs.appendFileSync(GITHUB_OUTPUT, `best_ip_json=${bestIpJsonOutput}\n`);
+                
+                console.log("\n--- 最优IP推荐 (详细) ---");
+                console.log(JSON.stringify(bestIp, null, 4));
+            }
+
+            main();
+          '
+        
+      - name: 打印最优 IP 结果
+        run: |
+          echo "::notice title=最优 IP 推荐::"
+          echo "${{ steps.parser.outputs.best_ip_json }}"
+          
+      - name: 将解析结果保存为制品 (Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-ip-data
+          path: ${{ env.OUTPUT_FILE }}
+          retention-days: 7 
+          
+      - name: 提交最新的 JSON 数据到仓库
+        # 使用 git-auto-commit-action 自动将生成的文件提交到您的 cf_bestip 仓库
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "CI: 自动更新 Cloudflare 优选 IP 数据"
+          files: ${{ env.OUTPUT_FILE }}
+        # 仅在脚本成功运行并产生输出文件后执行提交
+        if: success()
