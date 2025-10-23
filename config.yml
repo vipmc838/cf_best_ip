@@ -1,25 +1,22 @@
 dns:
-  zone_id: "YOUR_ZONE_ID_HERE"
-  domain: "example.com"
+  zone_id: "ff80808298c3379801996aa8c0520a60"
+  domain: "cdn.orgv.me"
   subdomain: "cf"
   ttl: 1
   lines:
     - operator: "ct"
-      a_recordset_id: "12345678"
-      aaaa_recordset_id: "87654321"
-      cap: 2
+      a_recordset_id: "ff80808299e06ed4019a117d2bbf3f2e" 
+      cap: 5
     - operator: "cu"
-      a_recordset_id: "23456789"
-      aaaa_recordset_id: "98765432"
-      cap: 2
+      a_recordset_id: "ff80808298e1fcfb019a11879d526cff"
+      cap: 5
     - operator: "cm"
-      a_recordset_id: "34567890"
-      aaaa_recordset_id: "09876543"
-      cap: 2
+      a_recordset_id: "ff80808299e06ed4019a1187052e45fc"
+      cap: 5
 
 huawei:
   enabled: true
   project_id: "${HUAWEI_PROJECT_ID}"
   access_key: "${HUAWEI_ACCESS_KEY}"
   secret_key: "${HUAWEI_SECRET_KEY}"
-  region: "cn-north-4"
+  region: "ap-southeast-1"
