@@ -1,0 +1,25 @@
+dns:
+  zone_id: "YOUR_ZONE_ID_HERE"
+  domain: "example.com"
+  subdomain: "cf"
+  ttl: 1
+  lines:
+    - operator: "ct"
+      a_recordset_id: "12345678"
+      aaaa_recordset_id: "87654321"
+      cap: 2
+    - operator: "cu"
+      a_recordset_id: "23456789"
+      aaaa_recordset_id: "98765432"
+      cap: 2
+    - operator: "cm"
+      a_recordset_id: "34567890"
+      aaaa_recordset_id: "09876543"
+      cap: 2
+
+huawei:
+  enabled: true
+  project_id: "${HUAWEI_PROJECT_ID}"
+  access_key: "${HUAWEI_ACCESS_KEY}"
+  secret_key: "${HUAWEI_SECRET_KEY}"
+  region: "cn-north-4"
