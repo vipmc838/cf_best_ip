@@ -1,0 +1,31 @@
+name: Update Huawei Cloud DNS from Cloudflare IP
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 每小时运行一次
+  workflow_dispatch:      # 支持手动触发
+
+jobs:
+  update-dns:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.21"
+
+      - name: Install dependencies
+        run: go mod tidy
+
+      - name: Build Go binary
+        run: go build -o cloudflare_fetch cloudflare_fetch.go
+
+      - name: Run DNS update
+        env:
+          HUAWEI_PROJECT_ID: ${{ secrets.HUAWEI_PROJECT_ID }}
+          HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
+          HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+        run: ./cloudflare_fetch
