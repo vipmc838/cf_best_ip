@@ -12,21 +12,12 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
-	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/region"
-	dns "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
+	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/region"
 )
 
-// 线路类型
-var lineMap = map[string]string{
-	"ct": "中国电信",
-	"cu": "中国联通",
-	"cm": "中国移动",
-}
-
-// IP 信息结构
 type IPInfo struct {
 	IP        string  `json:"ip"`
 	Latency   float64 `json:"latency"`
@@ -36,14 +27,19 @@ type IPInfo struct {
 	Time      string  `json:"time"`
 }
 
-// 输出 JSON 结构
 type OutputJSON struct {
 	GeneratedAt string              `json:"生成时间"`
 	BestIPs     map[string]IPInfo   `json:"最优IP推荐"`
 	AllIPs      map[string][]IPInfo `json:"完整数据列表"`
 }
 
-// 辅助函数：抓取网页并解析三网 IP
+var lineMap = map[string]string{
+	"ct": "中国电信",
+	"cu": "中国联通",
+	"cm": "中国移动",
+}
+
+// 抓取三网 Cloudflare IP
 func fetchCloudflareIPs(url string) (map[string][]IPInfo, map[string]IPInfo, error) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -92,7 +88,6 @@ func fetchCloudflareIPs(url string) (map[string][]IPInfo, map[string]IPInfo, err
 
 		allIPs[line] = append(allIPs[line], info)
 
-		// 选择丢包为 0 的最优 IP
 		if loss == "0.00%" {
 			if exist, ok := bestIPs[line]; !ok || info.Latency < exist.Latency || (info.Latency == exist.Latency && info.Speed > exist.Speed) {
 				bestIPs[line] = info
@@ -100,7 +95,7 @@ func fetchCloudflareIPs(url string) (map[string][]IPInfo, map[string]IPInfo, err
 		}
 	})
 
-	// 按延迟排序
+	// 延迟排序
 	for k := range allIPs {
 		sort.Slice(allIPs[k], func(i, j int) bool {
 			if allIPs[k][i].Latency != allIPs[k][j].Latency {
@@ -113,34 +108,27 @@ func fetchCloudflareIPs(url string) (map[string][]IPInfo, map[string]IPInfo, err
 	return allIPs, bestIPs, nil
 }
 
-// 更新 DNS 记录（A/AAAA）
+// 更新 DNS
 func updateHuaweiDNS(client *dns.DnsClient, zoneID, recordsetID, recordType, fullName string, ips []string) error {
-	updateReq := &model.UpdateRecordSetReq{
-		Name:    &fullName,
-		Type:    &recordType,
-		Records: ips,
-		Ttl:     int32Ptr(60),
-	}
-
 	req := &model.UpdateRecordSetRequest{
 		ZoneId:      zoneID,
 		RecordsetId: recordsetID,
-		Body:        updateReq,
+		Body: &model.UpdateRecordSetReq{
+			Name:    &fullName,
+			Type:    &recordType,
+			Records: &ips,
+			Ttl:     int32Ptr(60),
+		},
 	}
-
-	_, err := client.UpdateRecordSet(context.Background(), req)
+	_, err := client.UpdateRecordSet(req)
 	return err
 }
 
-// int32 指针
-func int32Ptr(i int32) *int32 {
-	return &i
-}
+func int32Ptr(i int32) *int32 { return &i }
 
 func main() {
 	url := "https://api.uouin.com/cloudflare.html"
 
-	// 1. 抓取 IP
 	allIPs, bestIPs, err := fetchCloudflareIPs(url)
 	if err != nil {
 		fmt.Println("抓取失败:", err)
@@ -153,13 +141,11 @@ func main() {
 		AllIPs:      allIPs,
 	}
 
-	// 写 JSON
 	jsonFile := "cloudflare_ips.json"
 	data, _ := json.MarshalIndent(output, "", "    ")
 	os.WriteFile(jsonFile, data, 0644)
 	fmt.Println("✅ JSON 文件已生成:", jsonFile)
 
-	// 2. 初始化华为云 SDK
 	ak := os.Getenv("HUAWEI_ACCESS_KEY")
 	sk := os.Getenv("HUAWEI_SECRET_KEY")
 	projectID := os.Getenv("HUAWEI_PROJECT_ID")
@@ -175,15 +161,14 @@ func main() {
 	client := dns.NewDnsClient(
 		dns.DnsClientBuilder().
 			WithRegion(region.ValueOf(regionID)).
-			WithCredential(auth),
+			WithCredential(auth).
+			Build(),
 	)
 
-	// 3. 更新三网 DNS
-	type LineConfig struct {
+	lines := map[string]struct {
 		AID    string
 		AAAAID string
-	}
-	lines := map[string]LineConfig{
+	}{
 		"ct": {AID: os.Getenv("CT_A_ID"), AAAAID: os.Getenv("CT_AAAA_ID")},
 		"cu": {AID: os.Getenv("CU_A_ID"), AAAAID: os.Getenv("CU_AAAA_ID")},
 		"cm": {AID: os.Getenv("CM_A_ID"), AAAAID: os.Getenv("CM_AAAA_ID")},
@@ -211,7 +196,6 @@ func main() {
 				fmt.Printf("✅ [%s] A 记录已更新: %v\n", lineMap[op], ips)
 			}
 		}
-
 		if cfg.AAAAID != "" {
 			err := updateHuaweiDNS(client, zoneID, cfg.AAAAID, "AAAA", fullName, ips)
 			if err != nil {
