@@ -1,163 +1,109 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 import os
 import json
 import requests
-from bs4 import BeautifulSoup
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
+from huaweicloudsdkdns.v2.model import ListPublicZonesRequest, ListRecordSetsWithLineRequest, UpdateRecordSetRequest, UpdateRecordSetReq
 from huaweicloudsdkdns.v2.region.dns_region import DnsRegion
-from huaweicloudsdkdns.v2.model import ListRecordSetsRequest, CreateRecordSetRequest, UpdateRecordSetRequest
-
-OUTPUT_FILE = "cloudflare_bestip.json"
 
 class HuaWeiApi:
-    def __init__(self, access_key, secret_key, region):
-        self.AK = access_key
-        self.SK = secret_key
+    def __init__(self, ak, sk, region='ap-southeast-1'):
+        self.ak = ak
+        self.sk = sk
         self.region = region
-        self.client = DnsClient.new_builder()\
-            .with_credentials(BasicCredentials(self.AK, self.SK))\
-            .with_region(DnsRegion.value_of(self.region))\
+        self.client = DnsClient.new_builder() \
+            .with_credentials(BasicCredentials(self.ak, self.sk)) \
+            .with_region(DnsRegion.value_of(self.region)) \
             .build()
         self.zone_id = self.get_zones()
 
     def get_zones(self):
+        request = ListPublicZonesRequest()
+        response = self.client.list_public_zones(request)
         zones = {}
-        for zone in self.client.list_public_zones().zones:
+        for zone in response.zones:
             zones[zone.name] = zone.id
         return zones
 
-    def get_records(self, domain, record_type='A'):
-        request = ListRecordSetsRequest()
-        request.zone_id = self.zone_id[domain + "."]
+    def get_record(self, domain, sub_domain, record_type='A'):
+        request = ListRecordSetsWithLineRequest()
+        request.zone_id = self.zone_id[domain + '.']
+        request.name = f"{sub_domain}.{domain}." if sub_domain != '@' else f"{domain}."
         request.type = record_type
-        response = self.client.list_record_sets(request)
+        response = self.client.list_record_sets_with_line(request)
         return response.recordsets
 
-    def create_record(self, domain, name, ip, record_type='A', ttl=600):
-        body = {
-            "name": name,
-            "type": record_type,
-            "ttl": ttl,
-            "records": [ip]
-        }
-        request = CreateRecordSetRequest(
-            zone_id=self.zone_id[domain + "."],
-            body=body
+    def update_record(self, domain, sub_domain, value, record_type='A', ttl=1):
+        records = self.get_record(domain, sub_domain, record_type)
+        if not records:
+            print(f"{domain} {sub_domain} 没有找到记录，无法更新")
+            return
+        record_id = records[0].id
+        request = UpdateRecordSetRequest()
+        request.zone_id = self.zone_id[domain + '.']
+        request.recordset_id = record_id
+        request.body = UpdateRecordSetReq(
+            name=f"{sub_domain}.{domain}." if sub_domain != '@' else f"{domain}.",
+            type=record_type,
+            ttl=ttl,
+            records=[value]
         )
-        return self.client.create_record_set(request)
-
-    def update_record(self, domain, record_id, name, ip, record_type='A', ttl=600):
-        body = {
-            "name": name,
-            "type": record_type,
-            "ttl": ttl,
-            "records": [ip]
-        }
-        request = UpdateRecordSetRequest(
-            zone_id=self.zone_id[domain + "."],
-            recordset_id=record_id,
-            body=body
-        )
-        return self.client.update_record_set(request)
+        resp = self.client.update_record_set(request)
+        print(f"更新 {sub_domain}.{domain} -> {value} 成功")
+        return resp
 
 # -------------------------
-# 抓取 Cloudflare IP
+# Cloudflare IP 抓取
 # -------------------------
-def fetch_cloudflare_ips(url="https://api.uouin.com/cloudflare.html"):
+def fetch_cloudflare_ips():
+    url = "https://api.uouin.com/cloudflare.html"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-    table = soup.find("table", {"class": "table-striped"})
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    table = soup.find("table", class_="table-striped")
     if not table:
-        return {}, {}
-
-    headers = ["#", "线路", "优选IP", "丢包", "延迟", "速度", "带宽", "Colo", "时间"]
+        return {}
     full_data = {}
-    ip_metrics = []
-
-    for row in table.find_all("tr")[1:]:
-        cols = row.find_all(["th", "td"])
-        if len(cols) != len(headers):
+    headers = ["#", "线路", "优选IP", "丢包", "延迟", "速度", "带宽", "Colo", "时间"]
+    for tr in table.find_all("tr")[1:]:
+        tds = tr.find_all(["td","th"])
+        if len(tds) != len(headers):
             continue
         entry = {}
-        metrics = {}
-        for i, col in enumerate(cols):
-            text = col.get_text(strip=True)
-            if headers[i] == "线路":
-                entry["线路"] = text
-            elif headers[i] == "优选IP":
-                entry["IP"] = text
-            elif headers[i] == "丢包":
-                entry["丢包"] = text
-            elif headers[i] == "延迟":
-                try:
-                    metrics["latency"] = float(text.replace("ms",""))
-                except: metrics["latency"] = 9999
-                entry["延迟"] = text
-            elif headers[i] == "速度":
-                try:
-                    metrics["speed"] = float(text.replace("mb/s",""))
-                except: metrics["speed"] = 0
-                entry["速度"] = text
-            elif headers[i] == "带宽":
-                entry["带宽"] = text
-            elif headers[i] == "时间":
-                entry["时间"] = text
-        line = entry.get("线路")
-        if line:
-            full_data.setdefault(line, []).append({**entry, **metrics})
-        if entry.get("丢包") == "0.00%":
-            ip_metrics.append({**entry, **metrics})
-
-    for line in full_data:
-        full_data[line].sort(key=lambda x: (x["latency"], -x["speed"]))
-
-    best_ip = {}
-    if ip_metrics:
-        ip_metrics.sort(key=lambda x: (x["latency"], -x["speed"]))
-        best = ip_metrics[0]
-        best_ip = {
-            "线路": best["线路"],
-            "IP": best["IP"],
-            "延迟": best["延迟"],
-            "速度": best["速度"],
-            "带宽": best["带宽"],
-            "时间": best["时间"]
-        }
-
-    return full_data, best_ip
+        for i, td in enumerate(tds):
+            text = td.get_text(strip=True)
+            entry[headers[i]] = text
+        line = entry["线路"]
+        ip = entry["优选IP"]
+        if line not in full_data:
+            full_data[line] = []
+        full_data[line].append(entry)
+    return full_data
 
 # -------------------------
-# 主程序
+# 主函数
 # -------------------------
-if __name__ == "__main__":
-    ak = os.environ["HUAWEI_ACCESS_KEY"]
-    sk = os.environ["HUAWEI_SECRET_KEY"]
-    region = os.environ["HUAWEI_REGION"]
-    domain = os.environ["DOMAIN"]
-    subdomain = os.environ["SUBDOMAIN"]
+def main():
+    ak = os.environ.get("HUAWEI_ACCESS_KEY")
+    sk = os.environ.get("HUAWEI_SECRET_KEY")
+    region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
+    domain = os.environ.get("DOMAIN")
+    subdomain = os.environ.get("SUBDOMAIN", "cf")
 
     hw = HuaWeiApi(ak, sk, region)
-    full_data, best_ip = fetch_cloudflare_ips()
+    ip_data = fetch_cloudflare_ips()
 
-    for line, entries in full_data.items():
-        ip = entries[0]["IP"]
-        name = subdomain + "." + domain + "."
-        records = hw.get_records(domain)
-        if records:
-            for record in records:
-                hw.update_record(domain, record.id, name, ip)
-                print(f"{line} DNS 更新成功: {ip}")
+    # 按三网更新
+    for line in ["电信","联通","移动"]:
+        if line in ip_data and ip_data[line]:
+            ip = ip_data[line][0]["优选IP"]
+            hw.update_record(domain, subdomain, ip)
         else:
-            hw.create_record(domain, name, ip)
-            print(f"{line} DNS 创建成功: {ip}")
+            print(f"{line} 没有获取到 IP")
 
-    # 保存 JSON
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        json.dump({
-            "最优IP": best_ip,
-            "完整数据": full_data
-        }, f, ensure_ascii=False, indent=4)
-    print(f"结果已保存到 {OUTPUT_FILE}")
+if __name__ == "__main__":
+    main()
