@@ -1,9 +1,9 @@
-name: Cloudflare IP抓取并更新华为云DNS
+name: Cloudflare DNS Updater
 
 on:
-  schedule:
-    - cron: '*/30 * * * *' # 每 30 分钟执行一次
   workflow_dispatch:
+  schedule:
+    - cron: '0 * * * *' # 每小时运行一次
 
 jobs:
   update-dns:
@@ -31,18 +31,27 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.22'
+          go-version: 1.22
+
+      - name: Initialize Go module
+        run: |
+          if [ ! -f go.mod ]; then
+            go mod init cloudflare-dns-updater
+          fi
+
+      - name: Download dependencies and generate go.sum
+        run: go mod tidy
 
       - name: Build Go binary
         run: go build -o cloudflare_fetch main.go
 
-      - name: Run Cloudflare IP fetch & Huawei DNS update
+      - name: Run Cloudflare fetch & Huawei DNS update
         run: ./cloudflare_fetch
 
-      - name: Commit cloudflare_ips.json
+      - name: Commit updated cloudflare_ips.json
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add $OUTPUT_FILE
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cloudflare_ips.json
           git commit -m "Update cloudflare_ips.json [skip ci]" || echo "No changes to commit"
-          git push origin HEAD
+          git push
