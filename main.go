@@ -15,7 +15,7 @@ import (
 
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
-	v2 "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	dns "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
 )
 
@@ -36,15 +36,14 @@ type OutputData struct {
 }
 
 type HuaweiDNSConfig struct {
-	ProjectID  string
-	AccessKey  string
-	SecretKey  string
-	Region     string
-	ZoneID     string
-	Domain     string
-	Subdomain  string
-	ARecord    map[string]string
-	AAAARecord map[string]string
+	ProjectID string
+	AccessKey string
+	SecretKey string
+	Region    string
+	ZoneID    string
+	Domain    string
+	Subdomain string
+	ARecord   map[string]string
 }
 
 func main() {
@@ -63,7 +62,7 @@ func main() {
 		},
 	}
 
-	cloudflareURL := "https://www.cloudflare.com/ips-v4/" // 示例，可替换为抓取页面
+	cloudflareURL := "https://www.cloudflare.com/ips-v4/" // 示例
 	fmt.Println("🚀 开始抓取 Cloudflare IP ...")
 	fullData, err := fetchCloudflareIPs(cloudflareURL)
 	if err != nil {
@@ -76,7 +75,7 @@ func main() {
 		BestIP:       make(map[string]interface{}),
 	}
 
-	// 按运营商选最优 IP（延迟最小）
+	// 选择最优 IP
 	for line, entries := range fullData {
 		if len(entries) > 0 {
 			output.BestIP[line] = entries[0].IP
@@ -88,7 +87,20 @@ func main() {
 	os.WriteFile(jsonFile, dataBytes, 0644)
 	fmt.Printf("✅ JSON 文件已生成: %s\n", jsonFile)
 
-	// 更新华为云 DNS
+	// 华为云 DNS 客户端
+	auth := basic.NewCredentialsBuilder().
+		WithAk(cfg.AccessKey).
+		WithSk(cfg.SecretKey).
+		WithProjectId(cfg.ProjectID).
+		Build()
+
+	client := dns.NewDnsClient(
+		dns.DnsClientBuilder().
+			WithRegion(cfg.Region).
+			WithCredential(auth),
+	)
+
+	// 更新三网 A 记录
 	for line, recordID := range cfg.ARecord {
 		ips := []string{}
 		if entries, ok := fullData[line]; ok && len(entries) > 0 {
@@ -101,26 +113,17 @@ func main() {
 			continue
 		}
 
-		auth := basic.NewCredentialsBuilder().
-			WithAk(cfg.AccessKey).
-			WithSk(cfg.SecretKey).
-			WithProjectId(cfg.ProjectID).
-			Build()
-
-		client := v2.DnsClientBuilder().
-			WithRegion(v2.RegionValue(cfg.Region)).
-			WithCredential(auth).
-			Build()
+		reqBody := &model.UpdateRecordSetReq{
+			Name:    cfg.Subdomain + "." + cfg.Domain + ".",
+			Type:    "A",
+			Records: ips,
+			Ttl:     1,
+		}
 
 		req := &model.UpdateRecordSetRequest{
-			ZoneId:     cfg.ZoneID,
+			ZoneId:      cfg.ZoneID,
 			RecordsetId: recordID,
-			Body: &model.UpdateRecordSetReq{
-				Name:    core.StringPtr(cfg.Subdomain + "." + cfg.Domain + "."),
-				Type:    core.StringPtr("A"),
-				Records: &ips,
-				Ttl:     core.Int32Ptr(1),
-			},
+			Body:        reqBody,
 		}
 
 		_, err := client.UpdateRecordSet(req)
@@ -132,6 +135,7 @@ func main() {
 	}
 }
 
+// 抓取 Cloudflare IP 页面
 func fetchCloudflareIPs(url string) (map[string][]IPEntry, error) {
 	resp, err := http.Get(url)
 	if err != nil {
