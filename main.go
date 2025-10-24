@@ -14,7 +14,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/region"
-	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	dnsv2 "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
 )
 
@@ -113,8 +113,8 @@ func updateHuaweiDNS(operator string, ips []string) error {
 		WithProjectId(os.Getenv("HUAWEI_PROJECT_ID")).
 		Build()
 
-	client := dns.NewDnsClient(
-		dns.DnsClientBuilder().
+	client := dnsv2.NewDnsClient(
+		dnsv2.DnsClientBuilder().
 			WithRegion(region.ValueOf(os.Getenv("HUAWEI_REGION"))).
 			WithCredential(auth).
 			Build(),
@@ -134,16 +134,21 @@ func updateHuaweiDNS(operator string, ips []string) error {
 
 	fullName := fmt.Sprintf("%s.%s.", os.Getenv("SUBDOMAIN"), os.Getenv("DOMAIN"))
 
-	req := &model.UpdateRecordSetRequest{
-		ZoneId:   os.Getenv("ZONE_ID"),
-		RecordsetId: recordID,
-		Name:     &fullName,
-		Type:     model.UpdateRecordSetRequestTypeA,
-		Records:  &ips,
-		Ttl:      1,
+	// 最新 SDK v0.1.173 使用 UpdateRecordSetRequestBody
+	reqBody := &model.UpdateRecordSetReq{
+		Name:    fullName,
+		Type:    "A",
+		Records: ips,
+		Ttl:     1,
 	}
 
-	_, err := client.UpdateRecordSet(context.Background(), req)
+	req := &model.UpdateRecordSetRequest{
+		ZoneId:      os.Getenv("ZONE_ID"),
+		RecordsetId: recordID,
+		Body:        reqBody,
+	}
+
+	_, err := client.UpdateRecordSet(req)
 	if err != nil {
 		return err
 	}
