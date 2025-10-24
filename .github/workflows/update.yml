@@ -26,7 +26,7 @@ jobs:
         run: |
           go build -o cloudflare_fetch main.go
 
-      - name: 运行程序
+      - name: Build and run
         env:
           HUAWEI_PROJECT_ID: ${{ secrets.HUAWEI_PROJECT_ID }}
           HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
@@ -41,12 +41,13 @@ jobs:
           CU_AAAA_ID: ${{ secrets.CU_AAAA_ID }}
           CM_AAAA_ID: ${{ secrets.CM_AAAA_ID }}
         run: |
+          go mod tidy
+          go build -o cloudflare_fetch main.go
           ./cloudflare_fetch
-
       - name: Commit cloudflare_ips.json
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add cloudflare_ips.json
-          git diff --cached --quiet || git commit -m "更新 cloudflare_ips.json [skip ci]"
+          git commit -m "Update cloudflare_ips.json" || echo "No changes"
           git push
