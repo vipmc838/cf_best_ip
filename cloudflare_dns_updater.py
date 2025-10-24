@@ -6,8 +6,9 @@ import requests
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
 from huaweicloudsdkdns.v2.model.update_record_set_request import UpdateRecordSetRequest
-from huaweicloudsdkdns.v2.model.update_record_set_request_body import UpdateRecordSetReq
+from huaweicloudsdkdns.v2.model.update_record_set_request_body import UpdateRecordSetRequestBody
 from huaweicloudsdkdns.v2.region.dns_region import DnsRegion
+from bs4 import BeautifulSoup
 
 class HuaWeiApi:
     def __init__(self, ak, sk, region):
@@ -40,10 +41,9 @@ class HuaWeiApi:
 
     def update_record(self, domain, subdomain, value, record_type='A', ttl=1, line='默认'):
         records = self.list_records(domain, subdomain, record_type)
-        # 找到对应线路的记录
         record_to_update = None
         for r in records:
-            if r.line == self.line_format(line):
+            if getattr(r, "line", None) == self.line_format(line):
                 record_to_update = r
                 break
         if not record_to_update:
@@ -53,15 +53,14 @@ class HuaWeiApi:
         request = UpdateRecordSetRequest()
         request.zone_id = self.zone_id[domain + '.']
         request.recordset_id = record_to_update.id
-        request.body = UpdateRecordSetReq(
+        request.body = UpdateRecordSetRequestBody(
             name=f"{subdomain}.{domain}." if subdomain != '@' else f"{domain}.",
             type=record_type,
             ttl=ttl,
             records=[value]
         )
-        resp = self.client.update_record_set(request)
+        self.client.update_record_set(request)
         print(f"更新 {subdomain}.{domain} 线路 {line} -> {value} 成功")
-        return resp
 
     def line_format(self, line):
         lines = {
@@ -81,7 +80,6 @@ class HuaWeiApi:
 def fetch_cloudflare_ips(url="https://api.uouin.com/cloudflare.html"):
     try:
         r = requests.get(url, timeout=15)
-        from bs4 import BeautifulSoup
         soup = BeautifulSoup(r.text, 'html.parser')
         table = soup.find('table', {'class': 'table-striped'})
         if not table:
