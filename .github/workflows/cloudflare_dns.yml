@@ -1,30 +1,54 @@
-name: Cloudflare IP + HuaweiDNS
+name: Cloudflare IP + 华为云 DNS 更新
 
 on:
   schedule:
     - cron: '0 * * * *'  # 每小时运行一次
   workflow_dispatch:
 
+permissions:
+  contents: write
+  actions: read
+
 jobs:
   update_dns:
     runs-on: ubuntu-latest
     env:
-      ZONE_ID: ${{ secrets.ZONE_ID }}
-      SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
-      DOMAIN: ${{ secrets.DOMAIN }}
-      HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
-      ACCESS_KEY: ${{ secrets.ACCESS_KEY }}
-      SECRET_KEY: ${{ secrets.SECRET_KEY }}
-      CT_A_ID: ${{ secrets.CT_A_ID }}
-      CU_A_ID: ${{ secrets.CU_A_ID }}
-      CM_A_ID: ${{ secrets.CM_A_ID }}
+      OUTPUT_FILE: cloudflare_bestip.json
     steps:
-      - uses: actions/checkout@v4
+      - name: 检出代码
+        uses: actions/checkout@v4
 
-      - name: 安装 Python 依赖
+      - name: 设置 Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install huaweicloudsdkcore huaweicloudsdkdns requests beautifulsoup4
+          pip install requests huaweicloudsdkcore huaweicloudsdkdns beautifulsoup4
 
-      - name: 运行 Cloudflare IP 抓取与 DNS 更新
-        run: python cloudflare_dns_updater.py
+      - name: 运行 Cloudflare IP + 华为云 DNS 更新
+        env:
+          HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
+          HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+          HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+          SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
+        run: |
+          python cloudflare_dns_updater.py
+
+      - name: 上传 JSON 结果为 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-ip-data
+          path: ${{ env.OUTPUT_FILE }}
+          retention-days: 7
+
+      - name: 自动提交最新 JSON
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "CI: 自动更新 Cloudflare 优选 IP 数据"
+          file_pattern: ${{ env.OUTPUT_FILE }}
+          add_options: "--all --force"
+        if: success()
