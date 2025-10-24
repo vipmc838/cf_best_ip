@@ -3,12 +3,11 @@
 import os
 import json
 import requests
+from bs4 import BeautifulSoup
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
 from huaweicloudsdkdns.v2.model.update_record_set_request import UpdateRecordSetRequest
-from huaweicloudsdkdns.v2.model.update_record_set_request_body import UpdateRecordSetRequestBody
 from huaweicloudsdkdns.v2.region.dns_region import DnsRegion
-from bs4 import BeautifulSoup
 
 class HuaWeiApi:
     def __init__(self, ak, sk, region):
@@ -33,7 +32,7 @@ class HuaWeiApi:
     def list_records(self, domain, subdomain, record_type='A'):
         from huaweicloudsdkdns.v2.model.list_record_sets_request import ListRecordSetsRequest
         request = ListRecordSetsRequest()
-        request.zone_id = self.zone_id[domain + '.']
+        request.zone_id = self.zone_id[domain]
         request.type = record_type
         request.name = f"{subdomain}.{domain}." if subdomain != '@' else f"{domain}."
         response = self.client.list_record_sets(request)
@@ -51,14 +50,14 @@ class HuaWeiApi:
             return
 
         request = UpdateRecordSetRequest()
-        request.zone_id = self.zone_id[domain + '.']
+        request.zone_id = self.zone_id[domain]
         request.recordset_id = record_to_update.id
-        request.body = UpdateRecordSetRequestBody(
-            name=f"{subdomain}.{domain}." if subdomain != '@' else f"{domain}.",
-            type=record_type,
-            ttl=ttl,
-            records=[value]
-        )
+        request.body = {
+            "name": f"{subdomain}.{domain}." if subdomain != '@' else f"{domain}.",
+            "type": record_type,
+            "ttl": ttl,
+            "records": [value]
+        }
         self.client.update_record_set(request)
         print(f"更新 {subdomain}.{domain} 线路 {line} -> {value} 成功")
 
