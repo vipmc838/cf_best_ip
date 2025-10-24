@@ -7,8 +7,7 @@ import requests
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
 from huaweicloudsdkdns.v2.region.dns_region import DnsRegion
-from huaweicloudsdkdns.v2.model import ListRecordSetsWithLineRequest, UpdateRecordSetReq, UpdateRecordSetRequest
-from huaweicloudsdkdns.v2.model import CreateRecordSetRequest, CreateRecordSetReq, ListPublicZonesRequest
+from huaweicloudsdkdns.v2.model import RecordSet, ListRecordSetsWithLineRequest, CreateRecordSetRequest, UpdateRecordSetRequest, ListPublicZonesRequest
 
 class HuaWeiApi:
     def __init__(self, ak, sk, region="ap-southeast-1"):
@@ -17,7 +16,8 @@ class HuaWeiApi:
         self.region = region
         self.client = DnsClient.new_builder()\
             .with_credentials(BasicCredentials(self.ak, self.sk))\
-            .with_region(DnsRegion.value_of(self.region)).build()
+            .with_region(DnsRegion.value_of(self.region))\
+            .build()
         self.zone_id = self.get_zones()
         self.line_map = {'默认':'default_view','电信':'Dianxin','联通':'Liantong','移动':'Yidong'}
 
@@ -26,8 +26,7 @@ class HuaWeiApi:
         response = self.client.list_public_zones(request)
         zones = {}
         for z in response.zones:
-            name = z.name.rstrip('.')
-            zones[name] = z.id
+            zones[z.name.rstrip('.')] = z.id
         return zones
 
     def list_records(self, domain, sub_domain, record_type="A"):
@@ -41,42 +40,41 @@ class HuaWeiApi:
         return response.recordsets
 
     def update_record(self, domain, sub_domain, ip, record_type="A", line="默认", ttl=1):
-        records = self.list_records(domain, sub_domain, record_type)
         zone_id = self.zone_id[domain.rstrip('.')]
         line_value = self.line_map.get(line, 'default_view')
-        updated = False
 
+        records = self.list_records(domain, sub_domain, record_type)
+        matched = False
         for r in records:
             if r.line == line_value:
-                request = UpdateRecordSetRequest()
-                request.zone_id = zone_id
-                request.recordset_id = r.id
-                request.body = UpdateRecordSetReq(
+                req = UpdateRecordSetRequest()
+                req.zone_id = zone_id
+                req.recordset_id = r.id
+                req.body = RecordSet(
                     name=r.name,
-                    type=record_type,
+                    type=r.type,
                     ttl=ttl,
-                    records=[ip]
+                    records=[ip],
+                    line=r.line
                 )
-                self.client.update_record_set(request)
-                updated = True
+                self.client.update_record_set(req)
+                matched = True
 
-        # 如果没有记录则创建
-        if not updated:
-            request = CreateRecordSetRequest()
-            request.zone_id = zone_id
+        if not matched:
+            # 没有匹配到该线路，则创建
+            req = CreateRecordSetRequest()
+            req.zone_id = zone_id
             name = f"{sub_domain}.{domain}." if sub_domain != '@' else f"{domain}."
-            request.body = CreateRecordSetReq(
+            req.body = RecordSet(
                 name=name,
                 type=record_type,
                 ttl=ttl,
                 records=[ip],
-                line=line_value,
-                weight=1
+                line=line_value
             )
-            self.client.create_record_set(request)
-            updated = True
+            self.client.create_record_set(req)
 
-        return updated
+        return True
 
 def fetch_cloudflare_ips(max_per_line=50):
     url = "https://api.uouin.com/cloudflare.html"
@@ -134,14 +132,11 @@ if __name__ == "__main__":
 
     for line, ip in best_ips.items():
         try:
-            if hw.update_record(domain, subdomain, ip, line=line):
-                print(f"{ip} {line} 更新成功")
-            else:
-                print(f"{ip} {line} 更新失败")
+            hw.update_record(domain, subdomain, ip, line=line)
+            print(f"{ip} {line} 更新成功")
         except Exception as e:
-            print(f"{ip} {line} 更新异常: {e}")
+            print(f"{ip} {line} 更新失败: {e}")
 
-    # 保存 JSON
     out_file = "cloudflare_bestip.json"
     json.dump({"最优IP": best_ips, "完整数据": full_data}, open(out_file, "w", encoding="utf-8"), ensure_ascii=False, indent=4)
     print(f"结果保存到 {out_file}")
