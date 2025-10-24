@@ -32,6 +32,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 huaweicloudsdkcore huaweicloudsdkdns
 
-      - name: 运行脚本更新华为云 DNS
+      - name: 运行 Python 脚本
         run: |
           python cloudflare_dns_updater.py
