@@ -7,8 +7,9 @@ import requests
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
 from huaweicloudsdkdns.v2.region.dns_region import DnsRegion
-from huaweicloudsdkdns.v2.model import ListRecordSetsWithLineRequest, UpdateRecordSetReq, UpdateRecordSetRequest, CreateRecordSetRequest, CreateRecordSetReq
-from huaweicloudsdkdns.v2.model import ListPublicZonesRequest
+from huaweicloudsdkdns.v2.model import ListPublicZonesRequest, ListRecordSetsWithLineRequest
+from huaweicloudsdkdns.v2.model import UpdateRecordSetRequest, UpdateRecordSetReq
+from huaweicloudsdkdns.v2.model import CreateRecordSetRequest
 
 MAX_IP_PER_LINE = 50
 
@@ -41,7 +42,7 @@ class HuaWeiApi:
         response = self.client.list_record_sets_with_line(request)
         line_map = {'默认':'default_view','电信':'Dianxin','联通':'Liantong','移动':'Yidong','全网':'default_view'}
         line_value = line_map.get(line,'default_view')
-        return [r for r in response.recordsets if r.line==line_value]
+        return [r for r in response.recordsets if getattr(r,'line',None)==line_value]
 
     def update_record(self, domain, sub_domain, ip, record_type="A", line="默认", ttl=1):
         records = self.list_records(domain, sub_domain, record_type, line)
@@ -52,32 +53,31 @@ class HuaWeiApi:
         if records:
             # 更新已有记录
             for r in records:
-                if ip not in r.records:
-                    records_list = r.records[:MAX_IP_PER_LINE-1] + [ip]
-                    request = UpdateRecordSetRequest()
-                    request.zone_id = zone_id
-                    request.recordset_id = r.id
-                    request.body = UpdateRecordSetReq(
+                if ip not in getattr(r,'records',[]):
+                    new_records = getattr(r,'records',[])[:MAX_IP_PER_LINE-1] + [ip]
+                    req = UpdateRecordSetRequest()
+                    req.zone_id = zone_id
+                    req.recordset_id = r.id
+                    req.body = UpdateRecordSetReq(
                         name=r.name,
                         type=record_type,
                         ttl=ttl,
-                        records=records_list[:MAX_IP_PER_LINE]
+                        records=new_records[:MAX_IP_PER_LINE]
                     )
-                    self.client.update_record_set(request)
+                    self.client.update_record_set(req)
             return True
         else:
             # 创建新记录
-            request = CreateRecordSetRequest()
-            request.zone_id = zone_id
-            name = f"{sub_domain}.{domain}." if sub_domain!='@' else f"{domain}."
-            request.body = CreateRecordSetReq(
-                name=name,
-                type=record_type,
-                ttl=ttl,
-                records=[ip],
-                line=line_value
-            )
-            self.client.create_record_set(request)
+            req = CreateRecordSetRequest()
+            req.zone_id = zone_id
+            req.body = {
+                "name": f"{sub_domain}.{domain}." if sub_domain!='@' else f"{domain}.",
+                "type": record_type,
+                "ttl": ttl,
+                "records": [ip],
+                "line": line_value
+            }
+            self.client.create_record_set(req)
             return True
 
 def fetch_cloudflare_ips():
@@ -116,7 +116,6 @@ def fetch_cloudflare_ips():
             "时间": cols[8]
         })
 
-        # 只考虑丢包为0的IP，收集到各线路列表
         if packet=="0.00%":
             if ip_type=="A":
                 if line in ["默认","全网","电信","联通","移动"]:
@@ -129,7 +128,6 @@ def fetch_cloudflare_ips():
                 best_ips["IPv6"].append(ip)
                 best_ips["IPv6全网"].append(ip)
 
-    # 每条线路最多50个IP
     for k,v in best_ips.items():
         best_ips[k] = v[:MAX_IP_PER_LINE]
 
@@ -153,7 +151,6 @@ if __name__=="__main__":
             except Exception as e:
                 print(f"{ip} {line} 更新失败: {e}")
 
-    # 保存 JSON
     out_file = "cloudflare_bestip.json"
     json.dump({"最优IP": best_ips, "完整数据": full_data}, open(out_file,"w",encoding="utf-8"), ensure_ascii=False, indent=4)
     print(f"结果保存到 {out_file}")
