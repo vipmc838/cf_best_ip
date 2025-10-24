@@ -1,0 +1,37 @@
+name: 三网IP → 华为云DNS 更新任务
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # 每6小时执行
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: 初始化 Go 环境
+        run: |
+          echo "module cloudflare_dns_updater" > go.mod
+          echo "go 1.22" >> go.mod
+          go mod tidy
+
+      - name: 编译 Go 程序
+        run: go build -o cloudflare_fetch main.go
+
+      - name: 运行更新任务
+        env:
+          HUAWEI_PROJECT_ID: ${{ secrets.HUAWEI_PROJECT_ID }}
+          HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
+          HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+          ZONE_ID: ${{ secrets.ZONE_ID }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+          SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
+        run: ./cloudflare_fetch
