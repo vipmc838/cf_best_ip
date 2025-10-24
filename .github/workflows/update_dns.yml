@@ -3,44 +3,45 @@ name: Update Huawei Cloud DNS from Cloudflare IP
 on:
   schedule:
     - cron: '0 * * * *'  # 每小时运行一次
-  workflow_dispatch:      # 支持手动触发
+  workflow_dispatch:
 
 permissions:
-  contents: write    # 允许提交 go.sum 变更
+  contents: write
 
 jobs:
   update-dns:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true  # 保留 Git 凭据
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.22"
 
-      - name: Generate go.sum if missing
+      - name: Ensure go.mod exists
         run: |
-          if [ ! -f go.sum ]; then
-            echo "go.sum 不存在，自动生成..."
-          else
-            echo "go.sum 已存在，将进行更新..."
+          if [ ! -f go.mod ]; then
+            echo "未检测到 go.mod，自动初始化..."
+            go mod init cloudflare-dns-updater
           fi
+
+      - name: Generate go.sum
+        run: |
           go mod tidy
 
       - name: Commit and push go.sum changes (if any)
         run: |
-          if [ -n "$(git status --porcelain go.sum)" ]; then
+          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add go.sum
-            git commit -m "Auto-generate go.sum"
+            git add go.mod go.sum
+            git commit -m "Auto-generate go.mod and go.sum"
             git push
           else
-            echo "go.sum 无需更新"
+            echo "go.mod / go.sum 无需更新"
           fi
 
       - name: Build Go binary
