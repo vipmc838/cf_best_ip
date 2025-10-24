@@ -1,10 +1,10 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -12,199 +12,192 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
-	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	dns "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/dnsregion"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
-	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/region"
 )
 
+// 辅助指针函数
+func stringPtr(s string) *string { return &s }
+func int32Ptr(i int32) *int32    { return &i }
+
+// DNS 线路配置
+type LineConfig struct {
+	Operator     string
+	ARecordID    string
+	AAAARecordID string
+}
+
+// 抓取到的 IP 数据
 type IPInfo struct {
-	IP        string  `json:"ip"`
-	Latency   float64 `json:"latency"`
-	Speed     float64 `json:"speed"`
-	Loss      string  `json:"loss"`
-	Bandwidth string  `json:"bandwidth"`
-	Time      string  `json:"time"`
+	IP     string
+	Line   string
+	Latency float64
+	Speed   float64
+	Loss    string
+	Bandwidth string
+	Time    string
 }
 
-type OutputJSON struct {
-	GeneratedAt string              `json:"生成时间"`
-	BestIPs     map[string]IPInfo   `json:"最优IP推荐"`
-	AllIPs      map[string][]IPInfo `json:"完整数据列表"`
-}
-
-var lineMap = map[string]string{
-	"ct": "中国电信",
-	"cu": "中国联通",
-	"cm": "中国移动",
-}
-
-// 抓取三网 Cloudflare IP
-func fetchCloudflareIPs(url string) (map[string][]IPInfo, map[string]IPInfo, error) {
+// 解析网页获取三网 IP
+func fetchIPs() (map[string][]IPInfo, IPInfo, error) {
+	url := "https://api.uouin.com/cloudflare.html"
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, nil, err
+		return nil, IPInfo{}, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, nil, fmt.Errorf("HTTP 状态码: %d", resp.StatusCode)
-	}
-	bodyBytes, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, nil, err
+		return nil, IPInfo{}, err
 	}
 
-	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(bodyBytes)))
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(body)))
 	if err != nil {
-		return nil, nil, err
+		return nil, IPInfo{}, err
 	}
 
-	allIPs := make(map[string][]IPInfo)
-	bestIPs := make(map[string]IPInfo)
+	table := doc.Find("table.table.table-striped")
+	if table.Length() == 0 {
+		return nil, IPInfo{}, fmt.Errorf("未找到目标表格")
+	}
 
-	doc.Find("table.table.table-striped tbody tr").Each(func(i int, s *goquery.Selection) {
+	lines := map[string][]IPInfo{}
+	var bestIP IPInfo
+	ipMetrics := []IPInfo{}
+
+	table.Find("tr").Slice(1, goquery.ToEnd).Each(func(i int, s *goquery.Selection) {
 		cells := s.Find("th,td")
-		if cells.Length() < 9 {
+		if cells.Length() < 10 {
 			return
 		}
-
 		line := strings.TrimSpace(cells.Eq(1).Text())
 		ip := strings.TrimSpace(cells.Eq(2).Text())
 		loss := strings.TrimSpace(cells.Eq(3).Text())
 		latencyStr := strings.TrimSpace(cells.Eq(4).Text())
 		speedStr := strings.TrimSpace(cells.Eq(5).Text())
 		bandwidth := strings.TrimSpace(cells.Eq(6).Text())
-		timestamp := strings.TrimSpace(cells.Eq(8).Text())
+		timeStr := strings.TrimSpace(cells.Eq(9).Text())
 
-		latency := 9999.0
+		latency := 0.0
+		fmt.Sscanf(latencyStr, "%fms", &latency)
 		speed := 0.0
-		fmt.Sscanf(latencyStr, "%f", &latency)
-		fmt.Sscanf(speedStr, "%f", &speed)
+		fmt.Sscanf(speedStr, "%fmb/s", &speed)
 
 		info := IPInfo{
-			IP: ip, Latency: latency, Speed: speed, Loss: loss,
-			Bandwidth: bandwidth, Time: timestamp,
+			IP: ip, Line: line, Latency: latency, Speed: speed,
+			Loss: loss, Bandwidth: bandwidth, Time: timeStr,
 		}
 
-		allIPs[line] = append(allIPs[line], info)
+		lines[line] = append(lines[line], info)
 
 		if loss == "0.00%" {
-			if exist, ok := bestIPs[line]; !ok || info.Latency < exist.Latency || (info.Latency == exist.Latency && info.Speed > exist.Speed) {
-				bestIPs[line] = info
-			}
+			ipMetrics = append(ipMetrics, info)
 		}
 	})
 
-	// 延迟排序
-	for k := range allIPs {
-		sort.Slice(allIPs[k], func(i, j int) bool {
-			if allIPs[k][i].Latency != allIPs[k][j].Latency {
-				return allIPs[k][i].Latency < allIPs[k][j].Latency
+	// 选出最佳 IP
+	if len(ipMetrics) > 0 {
+		sort.Slice(ipMetrics, func(i, j int) bool {
+			if ipMetrics[i].Latency != ipMetrics[j].Latency {
+				return ipMetrics[i].Latency < ipMetrics[j].Latency
 			}
-			return allIPs[k][i].Speed > allIPs[k][j].Speed
+			return ipMetrics[i].Speed > ipMetrics[j].Speed
+		})
+		bestIP = ipMetrics[0]
+	}
+
+	// 对每个线路按延迟排序
+	for k := range lines {
+		sort.Slice(lines[k], func(i, j int) bool {
+			if lines[k][i].Latency != lines[k][j].Latency {
+				return lines[k][i].Latency < lines[k][j].Latency
+			}
+			return lines[k][i].Speed > lines[k][j].Speed
 		})
 	}
 
-	return allIPs, bestIPs, nil
+	return lines, bestIP, nil
 }
 
-// 更新 DNS
-func updateHuaweiDNS(client *dns.DnsClient, zoneID, recordsetID, recordType, fullName string, ips []string) error {
-	req := &model.UpdateRecordSetRequest{
-		ZoneId:      zoneID,
-		RecordsetId: recordsetID,
-		Body: &model.UpdateRecordSetReq{
-			Name:    &fullName,
-			Type:    &recordType,
-			Records: &ips,
-			Ttl:     int32Ptr(60),
-		},
-	}
-	_, err := client.UpdateRecordSet(req)
-	return err
-}
-
-func int32Ptr(i int32) *int32 { return &i }
-
-func main() {
-	url := "https://api.uouin.com/cloudflare.html"
-
-	allIPs, bestIPs, err := fetchCloudflareIPs(url)
-	if err != nil {
-		fmt.Println("抓取失败:", err)
-		return
-	}
-
-	output := OutputJSON{
-		GeneratedAt: time.Now().Format(time.RFC3339),
-		BestIPs:     bestIPs,
-		AllIPs:      allIPs,
-	}
-
-	jsonFile := "cloudflare_ips.json"
-	data, _ := json.MarshalIndent(output, "", "    ")
-	os.WriteFile(jsonFile, data, 0644)
-	fmt.Println("✅ JSON 文件已生成:", jsonFile)
-
-	ak := os.Getenv("HUAWEI_ACCESS_KEY")
-	sk := os.Getenv("HUAWEI_SECRET_KEY")
-	projectID := os.Getenv("HUAWEI_PROJECT_ID")
-	regionID := "ap-southeast-1"
-	zoneID := os.Getenv("ZONE_ID")
-
+// 更新华为云 DNS
+func updateHuaweiDNS(line LineConfig, ips []string) error {
 	auth := basic.NewCredentialsBuilder().
-		WithAk(ak).
-		WithSk(sk).
-		WithProjectId(projectID).
+		WithAk(os.Getenv("HUAWEI_ACCESS_KEY")).
+		WithSk(os.Getenv("HUAWEI_SECRET_KEY")).
+		WithProjectId(os.Getenv("HUAWEI_PROJECT_ID")).
 		Build()
 
 	client := dns.NewDnsClient(
 		dns.DnsClientBuilder().
-			WithRegion(region.ValueOf(regionID)).
+			WithRegion(dnsregion.ValueOf(os.Getenv("HUAWEI_REGION"))).
 			WithCredential(auth).
 			Build(),
 	)
 
-	lines := map[string]struct {
-		AID    string
-		AAAAID string
-	}{
-		"ct": {AID: os.Getenv("CT_A_ID"), AAAAID: os.Getenv("CT_AAAA_ID")},
-		"cu": {AID: os.Getenv("CU_A_ID"), AAAAID: os.Getenv("CU_AAAA_ID")},
-		"cm": {AID: os.Getenv("CM_A_ID"), AAAAID: os.Getenv("CM_AAAA_ID")},
+	fullName := fmt.Sprintf("%s.%s.", os.Getenv("SUBDOMAIN"), os.Getenv("DOMAIN"))
+
+	req := &model.UpdateRecordSetRequest{
+		ZoneId:      os.Getenv("ZONE_ID"),
+		RecordsetId: line.ARecordID,
+		Body: &model.UpdateRecordSetReq{
+			Name:    stringPtr(fullName),
+			Type:    stringPtr("A"),
+			Records: &ips,
+			Ttl:     int32Ptr(60),
+		},
 	}
 
-	subdomain := os.Getenv("SUBDOMAIN")
-	domain := os.Getenv("DOMAIN")
-	fullName := fmt.Sprintf("%s.%s.", subdomain, domain)
+	_, err := client.UpdateRecordSet(req)
+	return err
+}
 
-	for op, cfg := range lines {
-		var ips []string
-		for _, ipinfo := range allIPs[op] {
-			ips = append(ips, ipinfo.IP)
+func main() {
+	log.Println("🚀 开始抓取 Cloudflare 三网 IP ...")
+	lines, bestIP, err := fetchIPs()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// 写入 cloudflare_ips.json
+	output := map[string]interface{}{
+		"生成时间":    time.Now().Format(time.RFC3339),
+		"最优IP":     bestIP,
+		"完整数据":   lines,
+	}
+
+	data, _ := json.MarshalIndent(output, "", "  ")
+	err = os.WriteFile("cloudflare_ips.json", data, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Println("✅ JSON 文件已生成: cloudflare_ips.json")
+
+	// DNS 更新配置
+	configs := []LineConfig{
+		{"ct", os.Getenv("CT_A_ID"), os.Getenv("CT_AAAA_ID")},
+		{"cu", os.Getenv("CU_A_ID"), os.Getenv("CU_AAAA_ID")},
+		{"cm", os.Getenv("CM_A_ID"), os.Getenv("CM_AAAA_ID")},
+	}
+
+	for _, cfg := range configs {
+		ipList := []string{}
+		for _, info := range lines[cfg.Operator] {
+			ipList = append(ipList, info.IP)
 		}
-		if len(ips) == 0 {
-			fmt.Printf("⚠️ [%s] 未找到有效 IP，跳过。\n", lineMap[op])
+		if len(ipList) == 0 {
+			log.Printf("⚠️ [%s] 未找到有效 IP，跳过。", cfg.Operator)
 			continue
 		}
-
-		if cfg.AID != "" {
-			err := updateHuaweiDNS(client, zoneID, cfg.AID, "A", fullName, ips)
-			if err != nil {
-				fmt.Printf("❌ [%s] A 记录更新失败: %v\n", lineMap[op], err)
-			} else {
-				fmt.Printf("✅ [%s] A 记录已更新: %v\n", lineMap[op], ips)
-			}
-		}
-		if cfg.AAAAID != "" {
-			err := updateHuaweiDNS(client, zoneID, cfg.AAAAID, "AAAA", fullName, ips)
-			if err != nil {
-				fmt.Printf("❌ [%s] AAAA 记录更新失败: %v\n", lineMap[op], err)
-			} else {
-				fmt.Printf("✅ [%s] AAAA 记录已更新: %v\n", lineMap[op], ips)
-			}
+		err := updateHuaweiDNS(cfg, ipList)
+		if err != nil {
+			log.Printf("❌ [%s] 更新失败: %v", cfg.Operator, err)
+		} else {
+			log.Printf("✅ [%s] DNS 已更新: %v", cfg.Operator, ipList)
 		}
 	}
 
-	fmt.Println("✅ DNS 更新任务完成。")
+	log.Println("🎉 DNS 更新任务完成。")
 }
