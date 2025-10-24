@@ -1,7 +1,6 @@
 package main
 
 import (
-    "context"
     "encoding/json"
     "fmt"
     "io"
@@ -41,7 +40,6 @@ func fetchIPs() (*AllIPs, error) {
 
     result := &AllIPs{}
 
-    // 简单解析 <table> 内容，提取三网 IP
     lines := strings.Split(htmlContent, "\n")
     for _, line := range lines {
         line = strings.TrimSpace(line)
@@ -75,13 +73,21 @@ func extractIP(line string) string {
     return ""
 }
 
+func strPtr(s string) *string {
+    return &s
+}
+
+func int32Ptr(i int32) *int32 {
+    return &i
+}
+
 func updateHuaweiDNS(client *dns.DnsClient, zoneID, recordsetID, recordType string, ips []string, subdomain, domain string) error {
     fullName := fmt.Sprintf("%s.%s.", subdomain, domain)
     req := &model.UpdateRecordSetReq{
-        Name:    &fullName,
-        Type:    recordType,
-        Records: ips,
-        Ttl:     1,
+        Name:    strPtr(fullName),
+        Type:    strPtr(recordType),
+        Records: &ips,
+        Ttl:     int32Ptr(1),
     }
     _, err := client.UpdateRecordSet(&model.UpdateRecordSetRequest{
         ZoneId:      zoneID,
@@ -130,7 +136,7 @@ func main() {
     json.NewEncoder(jsonFile).Encode(ips)
     log.Println("✅ JSON 文件已生成: cloudflare_ips.json")
 
-    // A记录
+    // 更新 A 记录
     if len(ips.CT.A) > 0 {
         if err := updateHuaweiDNS(client, zoneID, ctA, "A", ips.CT.A, subdomain, domain); err != nil {
             log.Println("❌ 电信 A DNS 更新失败:", err)
@@ -153,7 +159,7 @@ func main() {
         }
     }
 
-    // AAAA记录（这里用同样的 A IP 作为示例，如果有真实 IPv6 替换即可）
+    // 更新 AAAA 记录（示例用同样的 IPv4，可替换成真实 IPv6）
     if len(ips.CT.A) > 0 {
         if err := updateHuaweiDNS(client, zoneID, ctAAAA, "AAAA", ips.CT.A, subdomain, domain); err != nil {
             log.Println("❌ 电信 AAAA DNS 更新失败:", err)
