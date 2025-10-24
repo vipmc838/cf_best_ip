@@ -47,7 +47,6 @@ class HuaWeiApi:
         req.type = record_type
         req.limit = 100
         resp = self.client.list_record_sets_with_line(req)
-        # map your line name to SDK line value
         line_map = {
             "默认": "default_view",
             "全网": "default_view",
@@ -59,14 +58,10 @@ class HuaWeiApi:
         return [r for r in resp.recordsets if getattr(r, "line", None) == sdk_line]
 
     def set_records(self, domain, sub_domain, ips, record_type="A", line="默认", ttl=300):
-        """
-        覆盖更新：将记录覆盖为 ips（最多 MAX_IP_PER_LINE），如果不存在则创建
-        """
         if not ips:
             print(f"{record_type} | {line} 无有效 IP，跳过更新")
             return
 
-        # 按类型过滤
         if record_type == "A":
             ips = [ip for ip in ips if "." in ip]
         elif record_type == "AAAA":
@@ -83,12 +78,10 @@ class HuaWeiApi:
             return
 
         existing = self.list_records(domain, sub_domain, record_type, line)
-        # 限制数量
         ips = ips[:MAX_IP_PER_LINE]
 
         if existing:
             for r in existing:
-                # 仅在内容不同才更新
                 existing_vals = getattr(r, "records", []) or []
                 if sorted(existing_vals) != sorted(ips):
                     req = UpdateRecordSetRequest()
@@ -105,7 +98,6 @@ class HuaWeiApi:
                 else:
                     print(f"{line} {record_type} 无变化，跳过")
         else:
-            # 创建记录
             req = CreateRecordSetRequest()
             req.zone_id = zone_id
             req.body = {
@@ -113,19 +105,15 @@ class HuaWeiApi:
                 "type": record_type,
                 "ttl": ttl,
                 "records": ips,
-                "line": ( "default_view" if line in ("默认","全网") else
-                          ("Dianxin" if line == "电信" else
-                           ("Liantong" if line == "联通" else
-                            ("Yidong" if line == "移动" else "default_view"))))
+                "line": ("default_view" if line in ("默认","全网") else
+                         ("Dianxin" if line == "电信" else
+                          ("Liantong" if line == "联通" else
+                           ("Yidong" if line == "移动" else "default_view"))))
             }
             self.client.create_record_set(req)
             print(f"创建 {line} {record_type} => {ips}")
 
 def fetch_cloudflare_ips():
-    """
-    抓取 Cloudflare 表格，返回 full_data 和 best_ips 字典。
-    best_ips 按线路 + IPv6 分类，值为 IP 列表。
-    """
     url = "https://api.uouin.com/cloudflare.html"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
@@ -141,6 +129,7 @@ def fetch_cloudflare_ips():
         "IPv6": [],
         "IPv6全网": []
     }
+
     if not table:
         return full, best
 
@@ -152,32 +141,40 @@ def fetch_cloudflare_ips():
         line = cols[1]
         ip = cols[2]
         packet = cols[3]
-        # 只记录零丢包 IP
+
         if packet != "0.00%":
             continue
+
         if line not in full:
             full[line] = []
-        # 延迟 / 速度作为辅助，不用于最终记录
+
         full[line].append({
             "IP": ip,
             "带宽": cols[6],
             "时间": cols[8]
         })
-        # IPv4 or IPv6
+
+        # 自动识别未知线路
+        if line not in best:
+            best[line] = []
+
+        # 分类 IPv4 / IPv6
         if ":" in ip:
             best["IPv6"].append(ip)
             best["IPv6全网"].append(ip)
         else:
             best[line].append(ip)
-            # 默认 / 全网 聚合
+            # 未知线路或“多线”视为全网
+            if line not in ("电信", "联通", "移动", "默认", "全网"):
+                best["全网"].append(ip)
             best["默认"].append(ip)
-            best["全网"].append(ip)
 
-    # 限制每条线路最多的 IP 数量
+    # 限制最多 50 IP
     for k in best:
         best[k] = best[k][:MAX_IP_PER_LINE]
 
     return full, best
+
 
 if __name__ == "__main__":
     ak = os.environ.get("HUAWEI_ACCESS_KEY")
@@ -194,16 +191,13 @@ if __name__ == "__main__":
     full_data, best_ips = fetch_cloudflare_ips()
 
     processed = set()
-    # 处理 IPv4 三网 + 默认 / 全网
     for line in ["默认", "电信", "联通", "移动", "全网"]:
-        # 避免 默认 和 全网 重复
         if line == "全网" and "默认" in processed:
             continue
         processed.add(line)
         ip_list = best_ips.get(line, [])
         hw.set_records(domain, subdomain, ip_list, record_type="A", line=line)
 
-    # 处理 IPv6
     processed_v6 = set()
     for line in ["IPv6", "IPv6全网"]:
         if line == "IPv6全网" and "IPv6" in processed_v6:
@@ -212,12 +206,10 @@ if __name__ == "__main__":
         ip_list = best_ips.get(line, [])
         hw.set_records(domain, subdomain, ip_list, record_type="AAAA", line=line)
 
-    # 保存 JSON 输出
     out = {
         "最优IP": best_ips,
         "完整数据": full_data
     }
-    fname = "cloudflare_bestip.json"
-    with open(fname, "w", encoding="utf-8") as f:
+    with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=4)
-    print(f"结果保存到 {fname}")
+    print("结果保存到 cloudflare_bestip.json")
