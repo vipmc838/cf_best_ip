@@ -1,37 +1,30 @@
-name: Cloudflare DNS Updater
+name: Cloudflare IP + HuaweiDNS
 
 on:
   schedule:
-    # 每小时执行一次
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'  # 每小时运行一次
   workflow_dispatch:
 
 jobs:
-  update-dns:
+  update_dns:
     runs-on: ubuntu-latest
+    env:
+      ZONE_ID: ${{ secrets.ZONE_ID }}
+      SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
+      DOMAIN: ${{ secrets.DOMAIN }}
+      HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
+      ACCESS_KEY: ${{ secrets.ACCESS_KEY }}
+      SECRET_KEY: ${{ secrets.SECRET_KEY }}
+      CT_A_ID: ${{ secrets.CT_A_ID }}
+      CU_A_ID: ${{ secrets.CU_A_ID }}
+      CM_A_ID: ${{ secrets.CM_A_ID }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+      - name: 安装 Python 依赖
         run: |
           python -m pip install --upgrade pip
-          python -m pip install huaweicloudsdkcore huaweicloudsdkdns requests
+          pip install huaweicloudsdkcore huaweicloudsdkdns requests beautifulsoup4
 
-      - name: Run DNS updater
-        env:
-          HUAWEI_PROJECT_ID: ${{ secrets.HUAWEI_PROJECT_ID }}
-          HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
-          HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
-          HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
-          ZONE_ID: ${{ secrets.ZONE_ID }}
-          DOMAIN: ${{ secrets.DOMAIN }}
-          SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
-          CT_A_ID: ${{ secrets.CT_A_ID }}
-          CU_A_ID: ${{ secrets.CU_A_ID }}
-          CM_A_ID: ${{ secrets.CM_A_ID }}
+      - name: 运行 Cloudflare IP 抓取与 DNS 更新
         run: python cloudflare_dns_updater.py
