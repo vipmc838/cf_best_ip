@@ -1,0 +1,37 @@
+name: Cloudflare IP 优选 + 华为云 DNS 更新
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 每小时执行一次
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  update_dns:
+    runs-on: ubuntu-latest
+    env:
+      DOMAIN: cdn.orgv.me
+      SUBDOMAIN: cf
+      HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
+      HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+      HUAWEI_REGION: ap-southeast-1
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 huaweicloudsdkcore huaweicloudsdkdns
+
+      - name: 运行脚本更新华为云 DNS
+        run: |
+          python cloudflare_dns_updater.py
