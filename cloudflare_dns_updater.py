@@ -7,12 +7,7 @@ from bs4 import BeautifulSoup
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
 from huaweicloudsdkdns.v2.region.dns_region import DnsRegion
-from huaweicloudsdkdns.v2.model import (
-    RecordSet,
-    CreateRecordSetRequest,
-    UpdateRecordSetRequest,
-    ListRecordSetsRequest
-)
+from huaweicloudsdkdns.v2.model import ListRecordSetsRequest, CreateRecordSetRequest, UpdateRecordSetRequest
 
 OUTPUT_FILE = "cloudflare_bestip.json"
 
@@ -37,32 +32,35 @@ class HuaWeiApi:
         request = ListRecordSetsRequest()
         request.zone_id = self.zone_id[domain + "."]
         request.type = record_type
-        return self.client.list_record_sets(request).recordsets
+        response = self.client.list_record_sets(request)
+        return response.recordsets
 
     def create_record(self, domain, name, ip, record_type='A', ttl=600):
-        req = CreateRecordSetRequest(
+        body = {
+            "name": name,
+            "type": record_type,
+            "ttl": ttl,
+            "records": [ip]
+        }
+        request = CreateRecordSetRequest(
             zone_id=self.zone_id[domain + "."],
-            body=RecordSet(
-                name=name,
-                type=record_type,
-                ttl=ttl,
-                records=[ip]
-            )
+            body=body
         )
-        return self.client.create_record_set(req)
+        return self.client.create_record_set(request)
 
     def update_record(self, domain, record_id, name, ip, record_type='A', ttl=600):
-        req = UpdateRecordSetRequest(
+        body = {
+            "name": name,
+            "type": record_type,
+            "ttl": ttl,
+            "records": [ip]
+        }
+        request = UpdateRecordSetRequest(
             zone_id=self.zone_id[domain + "."],
             recordset_id=record_id,
-            body=RecordSet(
-                name=name,
-                type=record_type,
-                ttl=ttl,
-                records=[ip]
-            )
+            body=body
         )
-        return self.client.update_record_set(req)
+        return self.client.update_record_set(request)
 
 # -------------------------
 # 抓取 Cloudflare IP
@@ -94,10 +92,14 @@ def fetch_cloudflare_ips(url="https://api.uouin.com/cloudflare.html"):
             elif headers[i] == "丢包":
                 entry["丢包"] = text
             elif headers[i] == "延迟":
-                metrics["latency"] = float(text.replace("ms",""))
+                try:
+                    metrics["latency"] = float(text.replace("ms",""))
+                except: metrics["latency"] = 9999
                 entry["延迟"] = text
             elif headers[i] == "速度":
-                metrics["speed"] = float(text.replace("mb/s",""))
+                try:
+                    metrics["speed"] = float(text.replace("mb/s",""))
+                except: metrics["speed"] = 0
                 entry["速度"] = text
             elif headers[i] == "带宽":
                 entry["带宽"] = text
