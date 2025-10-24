@@ -108,13 +108,23 @@ func int32Ptr(i int32) *int32          { return &i }
 func strSlicePtr(s []string) *[]string { return &s }
 
 func updateHuaweiDNS(operator string, ips []string) error {
+	// 中文线路映射到代码
+	opMap := map[string]string{
+		"电信": "ct",
+		"联通": "cu",
+		"移动": "cm",
+	}
+	code, ok := opMap[operator]
+	if !ok {
+		return fmt.Errorf("未知运营商: %s", operator)
+	}
+
 	auth := basic.NewCredentialsBuilder().
 		WithAk(os.Getenv("HUAWEI_ACCESS_KEY")).
 		WithSk(os.Getenv("HUAWEI_SECRET_KEY")).
 		WithProjectId(os.Getenv("HUAWEI_PROJECT_ID")).
 		Build()
 
-	// 手动创建 Region
 	myRegion := region.NewRegion("ap-southeast-1", "https://dns.ap-southeast-1.myhuaweicloud.com")
 
 	client := dnsv2.NewDnsClient(
@@ -125,7 +135,7 @@ func updateHuaweiDNS(operator string, ips []string) error {
 	)
 
 	var recordID string
-	switch operator {
+	switch code {
 	case "ct":
 		recordID = os.Getenv("CT_A_ID")
 	case "cu":
@@ -133,7 +143,7 @@ func updateHuaweiDNS(operator string, ips []string) error {
 	case "cm":
 		recordID = os.Getenv("CM_A_ID")
 	default:
-		return fmt.Errorf("未知运营商: %s", operator)
+		return fmt.Errorf("未知运营商: %s", code)
 	}
 
 	fullName := fmt.Sprintf("%s.%s.", os.Getenv("SUBDOMAIN"), os.Getenv("DOMAIN"))
@@ -159,6 +169,7 @@ func updateHuaweiDNS(operator string, ips []string) error {
 	log.Printf("✅ %s DNS 已更新: %v", operator, ips)
 	return nil
 }
+
 
 func main() {
 	log.Println("🚀 开始抓取 Cloudflare 三网 IP ...")
