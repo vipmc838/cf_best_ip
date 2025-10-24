@@ -2,8 +2,6 @@ name: Cloudflare DNS Update
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 * * * *"  # 每小时运行一次，可自定义
 
 jobs:
   build:
