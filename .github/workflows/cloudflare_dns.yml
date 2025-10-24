@@ -1,4 +1,4 @@
-name: CF IP 优选 + 华为云 DNS 更新
+name: Cloudflare IP 优选 + 华为云 DNS 更新
 
 on:
   schedule:
