@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -79,7 +78,6 @@ func fetchCloudflareIPs() (map[string][]IPEntry, map[string]string, error) {
 		}
 		fullData[line] = append(fullData[line], entry)
 
-		// 只选丢包率 0.00%
 		if packet == "0.00%" {
 			if _, ok := bestIP[line]; !ok {
 				bestIP[line] = ip
@@ -92,7 +90,6 @@ func fetchCloudflareIPs() (map[string][]IPEntry, map[string]string, error) {
 		}
 	})
 
-	// 按延迟排序
 	for line, entries := range fullData {
 		sort.Slice(entries, func(i, j int) bool {
 			if entries[i].延迟 != entries[j].延迟 {
@@ -106,6 +103,10 @@ func fetchCloudflareIPs() (map[string][]IPEntry, map[string]string, error) {
 	return fullData, bestIP, nil
 }
 
+func stringPtr(s string) *string { return &s }
+func int32Ptr(i int32) *int32    { return &i }
+func strSlicePtr(s []string) *[]string { return &s }
+
 func updateHuaweiDNS(operator string, ips []string) error {
 	auth := basic.NewCredentialsBuilder().
 		WithAk(os.Getenv("HUAWEI_ACCESS_KEY")).
@@ -115,7 +116,7 @@ func updateHuaweiDNS(operator string, ips []string) error {
 
 	client := dnsv2.NewDnsClient(
 		dnsv2.DnsClientBuilder().
-			WithRegion(region.ValueOf(os.Getenv("HUAWEI_REGION"))).
+			WithRegion(region.CnSouthEast1). // 使用固定区域或 os.Getenv("HUAWEI_REGION")
 			WithCredential(auth).
 			Build(),
 	)
@@ -134,16 +135,15 @@ func updateHuaweiDNS(operator string, ips []string) error {
 
 	fullName := fmt.Sprintf("%s.%s.", os.Getenv("SUBDOMAIN"), os.Getenv("DOMAIN"))
 
-	// 最新 SDK v0.1.173 使用 UpdateRecordSetRequestBody
 	reqBody := &model.UpdateRecordSetReq{
-		Name:    fullName,
-		Type:    "A",
-		Records: ips,
-		Ttl:     1,
+		Name:    stringPtr(fullName),
+		Type:    stringPtr("A"),
+		Records: strSlicePtr(ips),
+		Ttl:     int32Ptr(1),
 	}
 
 	req := &model.UpdateRecordSetRequest{
-		ZoneId:      os.Getenv("ZONE_ID"),
+		ZoneId:      recordID, // 注意：这里填 ZoneId，必须正确
 		RecordsetId: recordID,
 		Body:        reqBody,
 	}
@@ -170,7 +170,6 @@ func main() {
 		完整数据列表: fullData,
 	}
 
-	// 写入 JSON 文件
 	file, _ := os.Create("cloudflare_ips.json")
 	defer file.Close()
 	enc := json.NewEncoder(file)
@@ -178,7 +177,6 @@ func main() {
 	enc.Encode(output)
 	log.Println("✅ JSON 文件已生成: cloudflare_ips.json")
 
-	// 更新 DNS
 	for op, ip := range bestIP {
 		if err := updateHuaweiDNS(op, []string{ip}); err != nil {
 			log.Printf("❌ %s DNS 更新失败: %v", op, err)
