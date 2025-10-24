@@ -4,146 +4,207 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"log"
+	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
-	dns "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/region"
+	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
 )
 
-type LineResult struct {
-	Active []struct {
-		IP string `json:"ip"`
-	} `json:"active"`
+// 线路类型
+var lineMap = map[string]string{
+	"ct": "中国电信",
+	"cu": "中国联通",
+	"cm": "中国移动",
 }
 
-type CloudflareData struct {
-	CT []string `json:"ct"`
-	CU []string `json:"cu"`
-	CM []string `json:"cm"`
+// IP 信息结构
+type IPInfo struct {
+	IP      string  `json:"ip"`
+	Latency float64 `json:"latency"`
+	Speed   float64 `json:"speed"`
+	Loss    string  `json:"loss"`
+	Bandwidth string `json:"bandwidth"`
+	Time    string `json:"time"`
 }
 
-func fetchCloudflareIPs() (*CloudflareData, error) {
-	resp, err := http.Get("https://api.uouin.com/cloudflare.html")
+// 输出 JSON 结构
+type OutputJSON struct {
+	GeneratedAt string              `json:"生成时间"`
+	BestIPs     map[string]IPInfo   `json:"最优IP推荐"`
+	AllIPs      map[string][]IPInfo `json:"完整数据列表"`
+}
+
+// 辅助函数：int32 指针
+func int32Ptr(i int32) *int32 {
+	return &i
+}
+
+// 辅助函数：抓取网页并解析三网 IP
+func fetchCloudflareIPs(url string) (map[string][]IPInfo, map[string]IPInfo, error) {
+	resp, err := http.Get(url)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
-
-	var data CloudflareData
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, err
+	if resp.StatusCode != 200 {
+		return nil, nil, fmt.Errorf("HTTP 状态码: %d", resp.StatusCode)
 	}
-	return &data, nil
-}
-
-func saveJSON(data *CloudflareData, filename string) error {
-	bs, err := json.MarshalIndent(data, "", "    ")
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	return ioutil.WriteFile(filename, bs, 0644)
-}
 
-func updateHuaweiDNS(client *dns.DnsClient, zoneID, recordsetID, recordType, fullName string, ips []string) error {
-	var records []model.CreateRecordSetReq
-	for _, ip := range ips {
-		records = append(records, model.CreateRecordSetReq{
-			Line:    "default",
-			Type:    recordType,
-			Name:    fullName,
-			Records: []string{ip},
-			TTL:     1,
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	allIPs := make(map[string][]IPInfo)
+	bestIPs := make(map[string]IPInfo)
+
+	doc.Find("table.table.table-striped tbody tr").Each(func(i int, s *goquery.Selection) {
+		cells := s.Find("th,td")
+		if cells.Length() < 9 {
+			return
+		}
+
+		line := strings.TrimSpace(cells.Eq(1).Text())
+		ip := strings.TrimSpace(cells.Eq(2).Text())
+		loss := strings.TrimSpace(cells.Eq(3).Text())
+		latencyStr := strings.TrimSpace(cells.Eq(4).Text())
+		speedStr := strings.TrimSpace(cells.Eq(5).Text())
+		bandwidth := strings.TrimSpace(cells.Eq(6).Text())
+		timestamp := strings.TrimSpace(cells.Eq(8).Text())
+
+		latency := 9999.0
+		speed := 0.0
+		fmt.Sscanf(latencyStr, "%f", &latency)
+		fmt.Sscanf(speedStr, "%f", &speed)
+
+		info := IPInfo{
+			IP: ip, Latency: latency, Speed: speed, Loss: loss,
+			Bandwidth: bandwidth, Time: timestamp,
+		}
+
+		allIPs[line] = append(allIPs[line], info)
+
+		// 选择丢包为 0 的最优 IP
+		if loss == "0.00%" {
+			if exist, ok := bestIPs[line]; !ok || info.Latency < exist.Latency || (info.Latency == exist.Latency && info.Speed > exist.Speed) {
+				bestIPs[line] = info
+			}
+		}
+	})
+
+	// 按延迟排序
+	for k := range allIPs {
+		sort.Slice(allIPs[k], func(i, j int) bool {
+			if allIPs[k][i].Latency != allIPs[k][j].Latency {
+				return allIPs[k][i].Latency < allIPs[k][j].Latency
+			}
+			return allIPs[k][i].Speed > allIPs[k][j].Speed
 		})
 	}
 
+	return allIPs, bestIPs, nil
+}
+
+// 更新单个运营商 DNS
+func updateHuaweiDNS(client *dns.DnsClient, zoneID, recordsetID, recordType, fullName string, ips []string) error {
 	req := &model.UpdateRecordSetRequest{
 		ZoneId:      zoneID,
 		RecordsetId: recordsetID,
-		Body: &model.UpdateRecordSetReq{
-			Name:    fullName,
-			Type:    recordType,
-			Records: ips,
-			TTL:     1,
-		},
+		Name:        &fullName,
+		Type:        recordType,
+		Records:     &ips,
+		Ttl:         int32Ptr(60),
 	}
 
-	_, err := client.UpdateRecordSet(req)
+	_, err := client.UpdateRecordSet(context.Background(), req)
 	return err
 }
 
 func main() {
-	log.Println("🚀 开始抓取 Cloudflare 三网 IP...")
+	url := "https://api.uouin.com/cloudflare.html"
 
-	data, err := fetchCloudflareIPs()
+	// 1. 抓取 IP
+	allIPs, bestIPs, err := fetchCloudflareIPs(url)
 	if err != nil {
-		log.Fatalf("抓取失败: %v", err)
+		fmt.Println("抓取失败:", err)
+		return
 	}
 
-	if err := saveJSON(data, "cloudflare_ips.json"); err != nil {
-		log.Fatalf("保存 JSON 失败: %v", err)
+	output := OutputJSON{
+		GeneratedAt: time.Now().Format(time.RFC3339),
+		BestIPs:     bestIPs,
+		AllIPs:      allIPs,
 	}
-	log.Println("✅ JSON 文件已生成: cloudflare_ips.json")
+
+	// 写 JSON
+	jsonFile := "cloudflare_ips.json"
+	data, _ := json.MarshalIndent(output, "", "    ")
+	os.WriteFile(jsonFile, data, 0644)
+	fmt.Println("✅ JSON 文件已生成:", jsonFile)
+
+	// 2. 初始化华为云 SDK
+	ak := os.Getenv("HUAWEI_ACCESS_KEY")
+	sk := os.Getenv("HUAWEI_SECRET_KEY")
+	projectID := os.Getenv("HUAWEI_PROJECT_ID")
+	regionID := "ap-southeast-1"
+	zoneID := os.Getenv("ZONE_ID")
 
 	auth := basic.NewCredentialsBuilder().
-		WithAk(os.Getenv("HUAWEI_ACCESS_KEY")).
-		WithSk(os.Getenv("HUAWEI_SECRET_KEY")).
-		WithProjectId(os.Getenv("HUAWEI_PROJECT_ID")).
+		WithAk(ak).
+		WithSk(sk).
+		WithProjectId(projectID).
 		Build()
 
 	client := dns.NewDnsClient(
-		dns.DnsClientBuilder().WithRegion(dns.RegionValue(os.Getenv("HUAWEI_REGION"))).WithCredential(auth),
+		dns.DnsClientBuilder().
+			WithRegion(region.ValueOf(regionID)).
+			WithCredential(auth),
 	)
 
-	zoneID := os.Getenv("ZONE_ID")
+	// 3. 更新三网 DNS
+	type LineConfig struct {
+		AID    string
+		AAAAID string
+	}
+	lines := map[string]LineConfig{
+		"ct": {AID: os.Getenv("CT_A_ID"), AAAAID: os.Getenv("CT_AAAA_ID")},
+		"cu": {AID: os.Getenv("CU_A_ID"), AAAAID: os.Getenv("CU_AAAA_ID")},
+		"cm": {AID: os.Getenv("CM_A_ID"), AAAAID: os.Getenv("CM_AAAA_ID")},
+	}
+
 	subdomain := os.Getenv("SUBDOMAIN")
 	domain := os.Getenv("DOMAIN")
+	fullName := fmt.Sprintf("%s.%s.", subdomain, domain)
 
-	operatorMap := map[string][]string{
-		"ct": data.CT,
-		"cu": data.CU,
-		"cm": data.CM,
-	}
-
-	recordIDMap := map[string]struct {
-		A    string
-		AAAA string
-	}{
-		"ct": {A: os.Getenv("CT_A_ID"), AAAA: os.Getenv("CT_AAAA_ID")},
-		"cu": {A: os.Getenv("CU_A_ID"), AAAA: os.Getenv("CU_AAAA_ID")},
-		"cm": {A: os.Getenv("CM_A_ID"), AAAA: os.Getenv("CM_AAAA_ID")},
-	}
-
-	for op, ips := range operatorMap {
+	for op, cfg := range lines {
+		var ips []string
+		for _, ipinfo := range allIPs[op] {
+			ips = append(ips, ipinfo.IP)
+		}
 		if len(ips) == 0 {
-			log.Printf("⚠️ [%s] 未找到有效 IP，跳过。", op)
+			fmt.Printf("⚠️ [%s] 未找到有效 IP，跳过。\n", lineMap[op])
 			continue
 		}
 
-		fullName := fmt.Sprintf("%s.%s.", subdomain, domain)
-		// 更新 A 记录
-		if recordIDMap[op].A != "" {
-			if err := updateHuaweiDNS(client, zoneID, recordIDMap[op].A, "A", fullName, ips); err != nil {
-				log.Printf("[error] 更新 %s A 记录失败: %v", op, err)
-			} else {
-				log.Printf("✅ %s DNS 已更新: %v", strings.ToUpper(op), ips)
-			}
-		}
-		// 更新 AAAA 记录
-		if recordIDMap[op].AAAA != "" {
-			if err := updateHuaweiDNS(client, zoneID, recordIDMap[op].AAAA, "AAAA", fullName, ips); err != nil {
-				log.Printf("[error] 更新 %s AAAA 记录失败: %v", op, err)
-			} else {
-				log.Printf("✅ %s DNS AAAA 已更新: %v", strings.ToUpper(op), ips)
-			}
+		err := updateHuaweiDNS(client, zoneID, cfg.AID, model.UpdateRecordSetRequestTypeA, fullName, ips)
+		if err != nil {
+			fmt.Printf("❌ [%s] A 记录更新失败: %v\n", lineMap[op], err)
+		} else {
+			fmt.Printf("✅ [%s] DNS 已更新: %v\n", lineMap[op], ips)
 		}
 	}
 
-	log.Println("✅ 所有 DNS 更新任务完成。")
+	fmt.Println("✅ DNS 更新任务完成。")
 }
