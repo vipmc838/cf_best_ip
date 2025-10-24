@@ -12,9 +12,10 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/region"
-	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	dns "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
 )
 
@@ -27,12 +28,12 @@ var lineMap = map[string]string{
 
 // IP 信息结构
 type IPInfo struct {
-	IP      string  `json:"ip"`
-	Latency float64 `json:"latency"`
-	Speed   float64 `json:"speed"`
-	Loss    string  `json:"loss"`
-	Bandwidth string `json:"bandwidth"`
-	Time    string `json:"time"`
+	IP        string  `json:"ip"`
+	Latency   float64 `json:"latency"`
+	Speed     float64 `json:"speed"`
+	Loss      string  `json:"loss"`
+	Bandwidth string  `json:"bandwidth"`
+	Time      string  `json:"time"`
 }
 
 // 输出 JSON 结构
@@ -40,11 +41,6 @@ type OutputJSON struct {
 	GeneratedAt string              `json:"生成时间"`
 	BestIPs     map[string]IPInfo   `json:"最优IP推荐"`
 	AllIPs      map[string][]IPInfo `json:"完整数据列表"`
-}
-
-// 辅助函数：int32 指针
-func int32Ptr(i int32) *int32 {
-	return &i
 }
 
 // 辅助函数：抓取网页并解析三网 IP
@@ -117,19 +113,28 @@ func fetchCloudflareIPs(url string) (map[string][]IPInfo, map[string]IPInfo, err
 	return allIPs, bestIPs, nil
 }
 
-// 更新单个运营商 DNS
+// 更新 DNS 记录（A/AAAA）
 func updateHuaweiDNS(client *dns.DnsClient, zoneID, recordsetID, recordType, fullName string, ips []string) error {
+	updateReq := &model.UpdateRecordSetReq{
+		Name:    &fullName,
+		Type:    &recordType,
+		Records: ips,
+		Ttl:     int32Ptr(60),
+	}
+
 	req := &model.UpdateRecordSetRequest{
 		ZoneId:      zoneID,
 		RecordsetId: recordsetID,
-		Name:        &fullName,
-		Type:        recordType,
-		Records:     &ips,
-		Ttl:         int32Ptr(60),
+		Body:        updateReq,
 	}
 
 	_, err := client.UpdateRecordSet(context.Background(), req)
 	return err
+}
+
+// int32 指针
+func int32Ptr(i int32) *int32 {
+	return &i
 }
 
 func main() {
@@ -198,11 +203,22 @@ func main() {
 			continue
 		}
 
-		err := updateHuaweiDNS(client, zoneID, cfg.AID, model.UpdateRecordSetRequestTypeA, fullName, ips)
-		if err != nil {
-			fmt.Printf("❌ [%s] A 记录更新失败: %v\n", lineMap[op], err)
-		} else {
-			fmt.Printf("✅ [%s] DNS 已更新: %v\n", lineMap[op], ips)
+		if cfg.AID != "" {
+			err := updateHuaweiDNS(client, zoneID, cfg.AID, "A", fullName, ips)
+			if err != nil {
+				fmt.Printf("❌ [%s] A 记录更新失败: %v\n", lineMap[op], err)
+			} else {
+				fmt.Printf("✅ [%s] A 记录已更新: %v\n", lineMap[op], ips)
+			}
+		}
+
+		if cfg.AAAAID != "" {
+			err := updateHuaweiDNS(client, zoneID, cfg.AAAAID, "AAAA", fullName, ips)
+			if err != nil {
+				fmt.Printf("❌ [%s] AAAA 记录更新失败: %v\n", lineMap[op], err)
+			} else {
+				fmt.Printf("✅ [%s] AAAA 记录已更新: %v\n", lineMap[op], ips)
+			}
 		}
 	}
 
