@@ -4,8 +4,8 @@ import time
 import requests
 from lxml import html
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
-from huaweicloudsdkcore.exceptions import exceptions
-from huaweicloudsdkdns.v2 import DnsClient, UpdateRecordSetRequest, UpdateRecordSetRequestBody
+from huaweicloudsdkdns.v2 import DnsClient
+from huaweicloudsdkdns.v2.model import UpdateRecordSetReq, UpdateRecordSetReqBody
 
 # ================== 配置 ==================
 HUAWEI_PROJECT_ID = os.getenv("HUAWEI_PROJECT_ID")
