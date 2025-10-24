@@ -1,0 +1,39 @@
+# 文件路径: .github/workflows/cloudflare_dns.yml
+name: CF DNS Update
+
+on:
+  schedule:
+    # 每小时运行一次（UTC 时间）
+    - cron: "0 * * * *"
+  workflow_dispatch: # 可手动触发
+
+jobs:
+  update-dns:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install huaweicloud-sdk-python-v3 requests lxml
+
+      - name: Run Cloudflare DNS updater
+        env:
+          HUAWEI_PROJECT_ID: ${{ secrets.HUAWEI_PROJECT_ID }}
+          HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
+          HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+          HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
+          ZONE_ID: ${{ secrets.ZONE_ID }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+          SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
+          CT_A_ID: ${{ secrets.CT_A_ID }}
+          CU_A_ID: ${{ secrets.CU_A_ID }}
+          CM_A_ID: ${{ secrets.CM_A_ID }}
+        run: python cloudflare_dns_updater.py
