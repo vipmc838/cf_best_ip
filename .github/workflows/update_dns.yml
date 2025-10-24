@@ -1,66 +1,47 @@
-name: Update Huawei Cloud DNS from Cloudflare IP
+name: Cloudflare IP 抓取并更新华为云 DNS
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小时执行一次
+    - cron: '0 */2 * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  update-dns:
+  update:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
 
-      - name: Ensure go.mod exists
+      - name: 初始化 go.mod（如无）
         run: |
           if [ ! -f go.mod ]; then
-            echo "未检测到 go.mod，自动初始化..."
             go mod init cloudflare-dns-updater
           fi
 
-      - name: Generate go.sum
+      - name: 安装依赖
         run: |
-          go mod tidy || echo "go mod tidy 执行完成（忽略警告）"
+          go mod tidy
+          go mod download
 
-      - name: Commit and push go.mod / go.sum changes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          CHANGED=0
-          if [ -n "$(git status --porcelain go.mod)" ]; then
-            git add go.mod
-            CHANGED=1
-          fi
-
-          if [ -f go.sum ] && [ -n "$(git status --porcelain go.sum)" ]; then
-            git add go.sum
-            CHANGED=1
-          fi
-
-          if [ "$CHANGED" -eq 1 ]; then
-            git commit -m "Auto-generate go.mod/go.sum"
-            git push
-          else
-            echo "go.mod/go.sum 无需更新"
-          fi
-
-      - name: Build Go binary
+      - name: 编译程序
         run: go build -o cloudflare_fetch cloudflare_fetch.go
 
-      - name: Run DNS update
+      - name: 执行抓取并更新 DNS
         env:
           HUAWEI_PROJECT_ID: ${{ secrets.HUAWEI_PROJECT_ID }}
           HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
           HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+          HUAWEI_ZONE_ID: ${{ secrets.HUAWEI_ZONE_ID }}
+          HUAWEI_DOMAIN: ${{ secrets.HUAWEI_DOMAIN }}
+          HUAWEI_SUBDOMAIN: ${{ secrets.HUAWEI_SUBDOMAIN }}
+          HUAWEI_CT_A_ID: ${{ secrets.HUAWEI_CT_A_ID }}
+          HUAWEI_CU_A_ID: ${{ secrets.HUAWEI_CU_A_ID }}
+          HUAWEI_CM_A_ID: ${{ secrets.HUAWEI_CM_A_ID }}
         run: ./cloudflare_fetch
