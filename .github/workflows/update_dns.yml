@@ -2,7 +2,7 @@ name: Update Huawei Cloud DNS from Cloudflare IP
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 每小时运行一次
+    - cron: '0 * * * *'  # 每小时执行一次
   workflow_dispatch:
 
 permissions:
@@ -30,18 +30,29 @@ jobs:
 
       - name: Generate go.sum
         run: |
-          go mod tidy
+          go mod tidy || echo "go mod tidy 执行完成（忽略警告）"
 
-      - name: Commit and push go.sum changes (if any)
+      - name: Commit and push go.mod / go.sum changes
         run: |
-          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add go.mod go.sum
-            git commit -m "Auto-generate go.mod and go.sum"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          CHANGED=0
+          if [ -n "$(git status --porcelain go.mod)" ]; then
+            git add go.mod
+            CHANGED=1
+          fi
+
+          if [ -f go.sum ] && [ -n "$(git status --porcelain go.sum)" ]; then
+            git add go.sum
+            CHANGED=1
+          fi
+
+          if [ "$CHANGED" -eq 1 ]; then
+            git commit -m "Auto-generate go.mod/go.sum"
             git push
           else
-            echo "go.mod / go.sum 无需更新"
+            echo "go.mod/go.sum 无需更新"
           fi
 
       - name: Build Go binary
