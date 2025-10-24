@@ -2,7 +2,7 @@ name: Cloudflare IP 优选 + 华为云 DNS 更新
 
 on:
   schedule:
-    - cron: '0 */1 * * *' # 每小时运行
+    - cron: '0 */1 * * *' # 每小时运行一次
   workflow_dispatch:
 
 permissions:
