@@ -1,179 +1,178 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-	"time"
+    "context"
+    "encoding/json"
+    "fmt"
+    "io"
+    "log"
+    "net/http"
+    "os"
+    "strings"
+
+    dns "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+    "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
+    "github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
 )
 
-// 配置结构
-type Config struct {
-	Huawei struct {
-		ProjectID string
-		AccessKey string
-		SecretKey string
-		Region    string
-	}
-	DNS struct {
-		ZoneID    string
-		Domain    string
-		Subdomain string
-		CT_A_ID    string
-		CU_A_ID    string
-		CM_A_ID    string
-		CT_AAAA_ID string
-		CU_AAAA_ID string
-		CM_AAAA_ID string
-	}
+type LineIPs struct {
+    A    []string `json:"A"`
+    AAAA []string `json:"AAAA"`
 }
 
-// API 响应格式
-type IPTable struct {
-	CT []string `json:"ct"`
-	CU []string `json:"cu"`
-	CM []string `json:"cm"`
+type AllIPs struct {
+    CT LineIPs `json:"ct"`
+    CU LineIPs `json:"cu"`
+    CM LineIPs `json:"cm"`
 }
 
-// 更新 DNS 请求结构
-type UpdateRecordRequest struct {
-	Name    string   `json:"name"`
-	Type    string   `json:"type"`
-	Records []string `json:"records"`
-	TTL     int      `json:"ttl"`
+func fetchIPs() (*AllIPs, error) {
+    resp, err := http.Get("https://api.uouin.com/cloudflare.html")
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, err
+    }
+    htmlContent := string(body)
+
+    result := &AllIPs{}
+
+    // 简单解析 <table> 内容，提取三网 IP
+    lines := strings.Split(htmlContent, "\n")
+    for _, line := range lines {
+        line = strings.TrimSpace(line)
+        if strings.Contains(line, "<td>ct</td>") {
+            ip := extractIP(line)
+            if ip != "" {
+                result.CT.A = append(result.CT.A, ip)
+            }
+        } else if strings.Contains(line, "<td>cu</td>") {
+            ip := extractIP(line)
+            if ip != "" {
+                result.CU.A = append(result.CU.A, ip)
+            }
+        } else if strings.Contains(line, "<td>cm</td>") {
+            ip := extractIP(line)
+            if ip != "" {
+                result.CM.A = append(result.CM.A, ip)
+            }
+        }
+    }
+
+    return result, nil
 }
 
-// 更新 DNS 返回结构
-type UpdateRecordResponse struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Type    string   `json:"type"`
-	Records []string `json:"records"`
+func extractIP(line string) string {
+    start := strings.Index(line, "<td>")
+    end := strings.Index(line[start+4:], "</td>")
+    if start >= 0 && end >= 0 {
+        return strings.TrimSpace(line[start+4 : start+4+end])
+    }
+    return ""
 }
 
-func loadConfig() Config {
-	var cfg Config
-	cfg.Huawei.ProjectID = os.Getenv("HUAWEI_PROJECT_ID")
-	cfg.Huawei.AccessKey = os.Getenv("HUAWEI_ACCESS_KEY")
-	cfg.Huawei.SecretKey = os.Getenv("HUAWEI_SECRET_KEY")
-	cfg.Huawei.Region = os.Getenv("HUAWEI_REGION")
-	cfg.DNS.ZoneID = os.Getenv("ZONE_ID")
-	cfg.DNS.Domain = os.Getenv("DOMAIN")
-	cfg.DNS.Subdomain = os.Getenv("SUBDOMAIN")
-	cfg.DNS.CT_A_ID = os.Getenv("CT_A_ID")
-	cfg.DNS.CU_A_ID = os.Getenv("CU_A_ID")
-	cfg.DNS.CM_A_ID = os.Getenv("CM_A_ID")
-	cfg.DNS.CT_AAAA_ID = os.Getenv("CT_AAAA_ID")
-	cfg.DNS.CU_AAAA_ID = os.Getenv("CU_AAAA_ID")
-	cfg.DNS.CM_AAAA_ID = os.Getenv("CM_AAAA_ID")
-	return cfg
-}
-
-// 获取 Cloudflare 三网 IP
-func fetchIPs() (IPTable, error) {
-	var table IPTable
-	resp, err := http.Get("https://api.uouin.com/cloudflare.html")
-	if err != nil {
-		return table, err
-	}
-	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
-	if err := json.Unmarshal(body, &table); err != nil {
-		return table, err
-	}
-	return table, nil
-}
-
-// 调用华为云 DNS API 更新记录
-func updateDNS(cfg Config, recordID, ipType string, ips []string) error {
-	url := fmt.Sprintf("https://dns.%s.myhuaweicloud.com/v2/zones/%s/recordsets/%s", cfg.Huawei.Region, cfg.DNS.ZoneID, recordID)
-
-	reqBody := UpdateRecordRequest{
-		Name:    fmt.Sprintf("%s.%s", cfg.DNS.Subdomain, cfg.DNS.Domain),
-		Type:    ipType,
-		Records: ips,
-		TTL:     1,
-	}
-
-	data, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("PUT", url, bytes.NewBuffer(data))
-	req.Header.Set("Content-Type", "application/json;charset=utf8")
-	req.Header.Set("X-Auth-Project-Id", cfg.Huawei.ProjectID)
-	req.Header.Set("X-Auth-Token", cfg.Huawei.AccessKey) // 简化示例，可使用 AK/SK 签名方式
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	respData, _ := ioutil.ReadAll(resp.Body)
-	log.Printf("更新响应: %s\n", string(respData))
-	return nil
+func updateHuaweiDNS(client *dns.DnsClient, zoneID, recordsetID, recordType string, ips []string, subdomain, domain string) error {
+    fullName := fmt.Sprintf("%s.%s.", subdomain, domain)
+    req := &model.UpdateRecordSetReq{
+        Name:    &fullName,
+        Type:    recordType,
+        Records: ips,
+        Ttl:     1,
+    }
+    _, err := client.UpdateRecordSet(&model.UpdateRecordSetRequest{
+        ZoneId:      zoneID,
+        RecordsetId: recordsetID,
+        Body:        req,
+    })
+    return err
 }
 
 func main() {
-	log.Println("🚀 开始抓取 Cloudflare 三网 IP ...")
-	cfg := loadConfig()
+    zoneID := os.Getenv("ZONE_ID")
+    domain := os.Getenv("DOMAIN")
+    subdomain := os.Getenv("SUBDOMAIN")
 
-	ips, err := fetchIPs()
-	if err != nil {
-		log.Fatal("❌ 获取 IP 失败:", err)
-	}
+    ctA := os.Getenv("CT_A_ID")
+    cuA := os.Getenv("CU_A_ID")
+    cmA := os.Getenv("CM_A_ID")
+    ctAAAA := os.Getenv("CT_AAAA_ID")
+    cuAAAA := os.Getenv("CU_AAAA_ID")
+    cmAAAA := os.Getenv("CM_AAAA_ID")
 
-	log.Printf("✅ 获取 IP 完成: CT=%v, CU=%v, CM=%v\n", ips.CT, ips.CU, ips.CM)
+    ak := os.Getenv("HUAWEI_ACCESS_KEY")
+    sk := os.Getenv("HUAWEI_SECRET_KEY")
+    projectID := os.Getenv("HUAWEI_PROJECT_ID")
 
-	if len(ips.CT) > 0 {
-		if err := updateDNS(cfg, cfg.DNS.CT_A_ID, "A", ips.CT); err != nil {
-			log.Println("❌ 电信 A 更新失败:", err)
-		} else {
-			log.Println("✅ 电信 A 更新成功")
-		}
-		if err := updateDNS(cfg, cfg.DNS.CT_AAAA_ID, "AAAA", ips.CT); err != nil {
-			log.Println("❌ 电信 AAAA 更新失败:", err)
-		} else {
-			log.Println("✅ 电信 AAAA 更新成功")
-		}
-	}
+    creds := basic.NewCredentialsBuilder().
+        WithAk(ak).
+        WithSk(sk).
+        WithProjectId(projectID).
+        Build()
 
-	if len(ips.CU) > 0 {
-		if err := updateDNS(cfg, cfg.DNS.CU_A_ID, "A", ips.CU); err != nil {
-			log.Println("❌ 联通 A 更新失败:", err)
-		} else {
-			log.Println("✅ 联通 A 更新成功")
-		}
-		if err := updateDNS(cfg, cfg.DNS.CU_AAAA_ID, "AAAA", ips.CU); err != nil {
-			log.Println("❌ 联通 AAAA 更新失败:", err)
-		} else {
-			log.Println("✅ 联通 AAAA 更新成功")
-		}
-	}
+    client := dns.NewDnsClient(
+        dns.DnsClientBuilder().
+            WithCredential(creds).
+            WithEndpoint("https://dns.ap-southeast-1.myhuaweicloud.com").
+            Build(),
+    )
 
-	if len(ips.CM) > 0 {
-		if err := updateDNS(cfg, cfg.DNS.CM_A_ID, "A", ips.CM); err != nil {
-			log.Println("❌ 移动 A 更新失败:", err)
-		} else {
-			log.Println("✅ 移动 A 更新成功")
-		}
-		if err := updateDNS(cfg, cfg.DNS.CM_AAAA_ID, "AAAA", ips.CM); err != nil {
-			log.Println("❌ 移动 AAAA 更新失败:", err)
-		} else {
-			log.Println("✅ 移动 AAAA 更新成功")
-		}
-	}
+    ips, err := fetchIPs()
+    if err != nil {
+        log.Fatal("获取 IP 失败:", err)
+    }
 
-	// 写回 JSON 文件
-	outFile := "cloudflare_ips.json"
-	allIPs := map[string][]string{"CT": ips.CT, "CU": ips.CU, "CM": ips.CM}
-	data, _ := json.MarshalIndent(allIPs, "", "  ")
-	if err := ioutil.WriteFile(outFile, data, 0644); err != nil {
-		log.Println("❌ 写 JSON 文件失败:", err)
-	} else {
-		log.Printf("✅ JSON 文件已生成: %s\n", outFile)
-	}
+    jsonFile, _ := os.Create("cloudflare_ips.json")
+    defer jsonFile.Close()
+    json.NewEncoder(jsonFile).Encode(ips)
+    log.Println("✅ JSON 文件已生成: cloudflare_ips.json")
+
+    // A记录
+    if len(ips.CT.A) > 0 {
+        if err := updateHuaweiDNS(client, zoneID, ctA, "A", ips.CT.A, subdomain, domain); err != nil {
+            log.Println("❌ 电信 A DNS 更新失败:", err)
+        } else {
+            log.Println("✅ 电信 A DNS 已更新:", ips.CT.A)
+        }
+    }
+    if len(ips.CU.A) > 0 {
+        if err := updateHuaweiDNS(client, zoneID, cuA, "A", ips.CU.A, subdomain, domain); err != nil {
+            log.Println("❌ 联通 A DNS 更新失败:", err)
+        } else {
+            log.Println("✅ 联通 A DNS 已更新:", ips.CU.A)
+        }
+    }
+    if len(ips.CM.A) > 0 {
+        if err := updateHuaweiDNS(client, zoneID, cmA, "A", ips.CM.A, subdomain, domain); err != nil {
+            log.Println("❌ 移动 A DNS 更新失败:", err)
+        } else {
+            log.Println("✅ 移动 A DNS 已更新:", ips.CM.A)
+        }
+    }
+
+    // AAAA记录（这里用同样的 A IP 作为示例，如果有真实 IPv6 替换即可）
+    if len(ips.CT.A) > 0 {
+        if err := updateHuaweiDNS(client, zoneID, ctAAAA, "AAAA", ips.CT.A, subdomain, domain); err != nil {
+            log.Println("❌ 电信 AAAA DNS 更新失败:", err)
+        } else {
+            log.Println("✅ 电信 AAAA DNS 已更新:", ips.CT.A)
+        }
+    }
+    if len(ips.CU.A) > 0 {
+        if err := updateHuaweiDNS(client, zoneID, cuAAAA, "AAAA", ips.CU.A, subdomain, domain); err != nil {
+            log.Println("❌ 联通 AAAA DNS 更新失败:", err)
+        } else {
+            log.Println("✅ 联通 AAAA DNS 已更新:", ips.CU.A)
+        }
+    }
+    if len(ips.CM.A) > 0 {
+        if err := updateHuaweiDNS(client, zoneID, cmAAAA, "AAAA", ips.CM.A, subdomain, domain); err != nil {
+            log.Println("❌ 移动 AAAA DNS 更新失败:", err)
+        } else {
+            log.Println("✅ 移动 AAAA DNS 已更新:", ips.CM.A)
+        }
+    }
 }
