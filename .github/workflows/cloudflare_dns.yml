@@ -1,9 +1,8 @@
-name: Cloudflare IP 优选抓取 & 华为云 DNS 更新
+name: Cloudflare IP & Huawei DNS Update
 
 on:
-  # 每小时运行一次
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'  # 每小时运行一次
   workflow_dispatch:
 
 permissions:
@@ -13,44 +12,20 @@ permissions:
 jobs:
   update_dns:
     runs-on: ubuntu-latest
-
     env:
-      OUTPUT_FILE: cloudflare_bestip.json
+      DOMAIN: cdn.orgv.me
+      SUBDOMAIN: cf
+      HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
+      HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+      HUAWEI_REGION: ap-southeast-1
 
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 设置 Python 3
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+      - uses: actions/checkout@v4
 
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 huaweicloudsdkcore huaweicloudsdkdns
 
-      - name: 运行 Cloudflare IP 抓取 & 华为云 DNS 更新
-        env:
-          HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
-          HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
-          HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
-          DOMAIN: ${{ secrets.DOMAIN }}
-          SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
-        run: |
-          python cloudflare_dns_updater.py
-
-      - name: 上传 JSON 结果为 Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cloudflare-ip-data
-          path: ${{ env.OUTPUT_FILE }}
-          retention-days: 7
-
-      - name: 自动提交更新的 JSON 到仓库
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "CI: 自动更新 Cloudflare 优选 IP 数据"
-          file_pattern: ${{ env.OUTPUT_FILE }}
-          add_options: "--all --force"
+      - name: 运行 Cloudflare IP 抓取与 DNS 更新
+        run: python cloudflare_dns_updater.py
