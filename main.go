@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,9 +9,9 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
+
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/region"
 	dnsv2 "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
@@ -18,105 +19,60 @@ import (
 )
 
 type IPEntry struct {
-	线路    string  `json:"线路"`
-	优选IP  string  `json:"优选IP"`
-	丢包    string  `json:"丢包"`
-	延迟    float64 `json:"延迟"`
-	速度    float64 `json:"速度"`
-	带宽    string  `json:"带宽"`
-	时间    string  `json:"时间"`
+	IP        string  `json:"优选IP"`
+	Line      string  `json:"线路"`
+	Latency   float64
+	Speed     float64
+	Packet    string `json:"丢包"`
+	Bandwidth string `json:"带宽"`
+	Time      string `json:"时间"`
 }
 
-type OutputJSON struct {
-	生成时间      string                `json:"生成时间"`
-	最优IP推荐    map[string]string     `json:"最优IP推荐"`
-	完整数据列表  map[string][]IPEntry  `json:"完整数据列表"`
+type OutputData struct {
+	GeneratedAt  string                 `json:"生成时间"`
+	BestIP       map[string]interface{} `json:"最优IP推荐"`
+	FullDataList map[string][]IPEntry   `json:"完整数据列表"`
 }
 
-func fetchCloudflareIPs() (map[string][]IPEntry, map[string]string, error) {
+func main() {
 	url := "https://api.uouin.com/cloudflare.html"
-	resp, err := http.Get(url)
+	fullData, err := fetchCloudflareIPs(url)
 	if err != nil {
-		return nil, nil, err
-	}
-	defer resp.Body.Close()
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		return nil, nil, err
+		log.Fatalf("抓取失败: %v", err)
 	}
 
-	fullData := make(map[string][]IPEntry)
-	bestIP := make(map[string]string)
-
-	doc.Find("table.table-striped tbody tr").Each(func(i int, s *goquery.Selection) {
-		tds := s.Find("th,td")
-		if tds.Length() < 9 {
-			return
-		}
-		line := strings.TrimSpace(tds.Eq(1).Text())
-		ip := strings.TrimSpace(tds.Eq(2).Text())
-		packet := strings.TrimSpace(tds.Eq(3).Text())
-		latencyStr := strings.TrimSpace(tds.Eq(4).Text())
-		speedStr := strings.TrimSpace(tds.Eq(5).Text())
-		bandwidth := strings.TrimSpace(tds.Eq(6).Text())
-		timeStr := strings.TrimSpace(tds.Eq(8).Text())
-
-		latency := 9999.0
-		fmt.Sscanf(latencyStr, "%fms", &latency)
-		speed := 0.0
-		fmt.Sscanf(speedStr, "%fmb/s", &speed)
-
-		entry := IPEntry{
-			线路:   line,
-			优选IP: ip,
-			丢包:   packet,
-			延迟:   latency,
-			速度:   speed,
-			带宽:   bandwidth,
-			时间:   timeStr,
-		}
-		fullData[line] = append(fullData[line], entry)
-
-		if packet == "0.00%" {
-			if _, ok := bestIP[line]; !ok {
-				bestIP[line] = ip
-			} else {
-				existing := fullData[line][0]
-				if entry.延迟 < existing.延迟 || (entry.延迟 == existing.延迟 && entry.速度 > existing.速度) {
-					bestIP[line] = ip
-				}
-			}
-		}
-	})
-
+	bestIP := make(map[string]interface{})
 	for line, entries := range fullData {
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].延迟 != entries[j].延迟 {
-				return entries[i].延迟 < entries[j].延迟
+		for _, e := range entries {
+			if e.Packet == "0.00%" {
+				bestIP[line] = map[string]interface{}{
+					"优选IP":    e.IP,
+					"延迟":      e.Latency,
+					"速度":      e.Speed,
+					"带宽":      e.Bandwidth,
+					"测试时间":    e.Time,
+				}
+				break
 			}
-			return entries[i].速度 > entries[j].速度
-		})
-		fullData[line] = entries
+		}
 	}
 
-	return fullData, bestIP, nil
-}
-
-func stringPtr(s string) *string       { return &s }
-func int32Ptr(i int32) *int32          { return &i }
-func strSlicePtr(s []string) *[]string { return &s }
-
-func updateHuaweiDNS(operator string, ips []string) error {
-	// 中文线路映射到代码
-	opMap := map[string]string{
-		"电信": "ct",
-		"联通": "cu",
-		"移动": "cm",
+	output := OutputData{
+		GeneratedAt:  fmt.Sprintf("%s", strings.Split(fmt.Sprintf("%v", os.Getenv("TZ")), " ")[0]),
+		BestIP:       bestIP,
+		FullDataList: fullData,
 	}
-	code, ok := opMap[operator]
-	if !ok {
-		return fmt.Errorf("未知运营商: %s", operator)
+
+	fileBytes, _ := json.MarshalIndent(output, "", "  ")
+	jsonFile := "cloudflare_ips.json"
+	os.WriteFile(jsonFile, fileBytes, 0644)
+	log.Printf("✅ JSON 文件已生成: %s", jsonFile)
+
+	// DNS 更新
+	huaweiCfg := map[string]string{
+		"电信": os.Getenv("CT_A_ID"),
+		"联通": os.Getenv("CU_A_ID"),
+		"移动": os.Getenv("CM_A_ID"),
 	}
 
 	auth := basic.NewCredentialsBuilder().
@@ -125,76 +81,147 @@ func updateHuaweiDNS(operator string, ips []string) error {
 		WithProjectId(os.Getenv("HUAWEI_PROJECT_ID")).
 		Build()
 
-	myRegion := region.NewRegion("ap-southeast-1", "https://dns.ap-southeast-1.myhuaweicloud.com")
+	hwRegion := region.NewRegion("ap-southeast-1", "https://dns.ap-southeast-1.myhuaweicloud.com")
+	client := dnsv2.NewDnsClient(dnsv2.DnsClientBuilder().WithRegion(hwRegion).WithCredential(auth).Build())
 
-	client := dnsv2.NewDnsClient(
-		dnsv2.DnsClientBuilder().
-			WithRegion(myRegion).
-			WithCredential(auth).
-			Build(),
-	)
-
-	var recordID string
-	switch code {
-	case "ct":
-		recordID = os.Getenv("CT_A_ID")
-	case "cu":
-		recordID = os.Getenv("CU_A_ID")
-	case "cm":
-		recordID = os.Getenv("CM_A_ID")
-	default:
-		return fmt.Errorf("未知运营商: %s", code)
+	for line, entries := range fullData {
+		var ips []string
+		for _, e := range entries {
+			ips = append(ips, e.IP)
+		}
+		if recordID, ok := huaweiCfg[line]; ok && len(ips) > 0 {
+			if err := updateHuaweiDNS(client, recordID, ips, os.Getenv("SUBDOMAIN"), os.Getenv("DOMAIN")); err != nil {
+				log.Printf("❌ %s DNS 更新失败: %v", line, err)
+			} else {
+				log.Printf("✅ %s DNS 已更新: %v", line, ips)
+			}
+		} else {
+			log.Printf("❌ %s DNS 更新失败: 未知运营商或无 IP", line)
+		}
 	}
+}
 
-	fullName := fmt.Sprintf("%s.%s.", os.Getenv("SUBDOMAIN"), os.Getenv("DOMAIN"))
-
+func updateHuaweiDNS(client *dnsv2.DnsClient, recordID string, ips []string, subdomain, domain string) error {
+	fullName := fmt.Sprintf("%s.%s.", subdomain, domain)
 	reqBody := &model.UpdateRecordSetReq{
-		Name:    stringPtr(fullName),
+		Name:    &fullName,
 		Type:    stringPtr("A"),
-		Records: strSlicePtr(ips),
+		Records: &ips,
 		Ttl:     int32Ptr(1),
 	}
-
 	req := &model.UpdateRecordSetRequest{
 		ZoneId:      recordID,
 		RecordsetId: recordID,
 		Body:        reqBody,
 	}
-
 	_, err := client.UpdateRecordSet(req)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("✅ %s DNS 已更新: %v", operator, ips)
-	return nil
+	return err
 }
 
+func stringPtr(s string) *string { return &s }
+func int32Ptr(i int32) *int32   { return &i }
 
-func main() {
-	log.Println("🚀 开始抓取 Cloudflare 三网 IP ...")
-	fullData, bestIP, err := fetchCloudflareIPs()
+func fetchCloudflareIPs(url string) (map[string][]IPEntry, error) {
+	resp, err := http.Get(url)
 	if err != nil {
-		log.Fatalf("抓取失败: %v", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
-	output := OutputJSON{
-		生成时间:     time.Now().Format(time.RFC3339),
-		最优IP推荐:   bestIP,
-		完整数据列表: fullData,
-	}
-
-	file, _ := os.Create("cloudflare_ips.json")
-	defer file.Close()
-	enc := json.NewEncoder(file)
-	enc.SetIndent("", "    ")
-	enc.Encode(output)
-	log.Println("✅ JSON 文件已生成: cloudflare_ips.json")
-
-	for op, ip := range bestIP {
-		if err := updateHuaweiDNS(op, []string{ip}); err != nil {
-			log.Printf("❌ %s DNS 更新失败: %v", op, err)
+	var table *html.Node
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "table" {
+			for _, a := range n.Attr {
+				if a.Key == "class" && strings.Contains(a.Val, "table-striped") {
+					table = n
+					return
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
 		}
 	}
-	log.Println("✅ DNS 更新完成。")
+	f(doc)
+	if table == nil {
+		return nil, fmt.Errorf("未找到目标表格")
+	}
+
+	fullData := make(map[string][]IPEntry)
+	trs := []*html.Node{}
+	for c := table.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "tbody" {
+			for tr := c.FirstChild; tr != nil; tr = tr.NextSibling {
+				if tr.Type == html.ElementNode && tr.Data == "tr" {
+					trs = append(trs, tr)
+				}
+			}
+		}
+	}
+
+	headers := []string{"#", "线路", "优选IP", "丢包", "延迟", "速度", "带宽", "Colo", "时间"}
+	for _, tr := range trs {
+		tds := []*html.Node{}
+		for td := tr.FirstChild; td != nil; td = td.NextSibling {
+			if td.Type == html.ElementNode && (td.Data == "td" || td.Data == "th") {
+				tds = append(tds, td)
+			}
+		}
+		if len(tds) != len(headers) {
+			continue
+		}
+		entry := IPEntry{}
+		var latency, speed float64
+		for i, td := range tds {
+			text := strings.TrimSpace(getNodeText(td))
+			switch headers[i] {
+			case "线路":
+				entry.Line = text
+			case "优选IP":
+				entry.IP = text
+			case "丢包":
+				entry.Packet = text
+			case "延迟":
+				fmt.Sscanf(text, "%fms", &latency)
+				entry.Latency = latency
+			case "速度":
+				fmt.Sscanf(text, "%fmb/s", &speed)
+				entry.Speed = speed
+			case "带宽":
+				entry.Bandwidth = text
+			case "时间":
+				entry.Time = text
+			}
+		}
+		fullData[entry.Line] = append(fullData[entry.Line], entry)
+	}
+
+	// 排序
+	for k := range fullData {
+		sort.Slice(fullData[k], func(i, j int) bool {
+			if fullData[k][i].Latency != fullData[k][j].Latency {
+				return fullData[k][i].Latency < fullData[k][j].Latency
+			}
+			return fullData[k][i].Speed > fullData[k][j].Speed
+		})
+	}
+
+	return fullData, nil
+}
+
+func getNodeText(n *html.Node) string {
+	if n.Type == html.TextNode {
+		return n.Data
+	}
+	var buf bytes.Buffer
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		buf.WriteString(getNodeText(c))
+	}
+	return buf.String()
 }
