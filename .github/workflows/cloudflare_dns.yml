@@ -39,10 +39,11 @@ jobs:
           path: cloudflare_bestip.json
           retention-days: 7
           
-      - name: Commit cloudflare_bestip.json
+      - name: 提交 Cloudflare IP JSON
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add $OUTPUT_FILE
-          git commit -m "Update cloudflare_bestip.json [skip ci]" || echo "No changes to commit"
-          git push origin HEAD
+          git add cloudflare_bestip.json
+          git commit -m "更新 cloudflare_bestip.json [skip ci]" || echo "No changes to commit"
+          git pull --rebase origin HEAD || true
+          git push origin HEAD || echo "Push failed, possibly due to no changes"
