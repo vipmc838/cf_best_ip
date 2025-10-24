@@ -4,21 +4,21 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/net/html"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
+	"time"
+
+	"golang.org/x/net/html"
 
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
-	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	v2 "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
 	"github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
 )
 
-// IPEntry 表示单个 IP 信息
 type IPEntry struct {
 	IP        string  `json:"优选IP"`
 	Line      string  `json:"线路"`
@@ -29,14 +29,12 @@ type IPEntry struct {
 	Time      string  `json:"时间"`
 }
 
-// OutputData 表示最终 JSON 输出结构
 type OutputData struct {
 	GeneratedAt  string                 `json:"生成时间"`
 	BestIP       map[string]interface{} `json:"最优IP推荐"`
 	FullDataList map[string][]IPEntry   `json:"完整数据列表"`
 }
 
-// HuaweiDNSConfig 配置
 type HuaweiDNSConfig struct {
 	ProjectID  string
 	AccessKey  string
@@ -49,7 +47,91 @@ type HuaweiDNSConfig struct {
 	AAAARecord map[string]string
 }
 
-// 获取 Cloudflare IP
+func main() {
+	cfg := HuaweiDNSConfig{
+		ProjectID: os.Getenv("HUAWEI_PROJECT_ID"),
+		AccessKey: os.Getenv("HUAWEI_ACCESS_KEY"),
+		SecretKey: os.Getenv("HUAWEI_SECRET_KEY"),
+		Region:    os.Getenv("HUAWEI_REGION"),
+		ZoneID:    os.Getenv("ZONE_ID"),
+		Domain:    os.Getenv("DOMAIN"),
+		Subdomain: os.Getenv("SUBDOMAIN"),
+		ARecord: map[string]string{
+			"电信": os.Getenv("CT_A_ID"),
+			"联通": os.Getenv("CU_A_ID"),
+			"移动": os.Getenv("CM_A_ID"),
+		},
+	}
+
+	cloudflareURL := "https://www.cloudflare.com/ips-v4/" // 示例，可替换为抓取页面
+	fmt.Println("🚀 开始抓取 Cloudflare IP ...")
+	fullData, err := fetchCloudflareIPs(cloudflareURL)
+	if err != nil {
+		log.Fatalf("抓取失败: %v", err)
+	}
+
+	output := OutputData{
+		GeneratedAt:  time.Now().Format("2006-01-02 15:04:05"),
+		FullDataList: fullData,
+		BestIP:       make(map[string]interface{}),
+	}
+
+	// 按运营商选最优 IP（延迟最小）
+	for line, entries := range fullData {
+		if len(entries) > 0 {
+			output.BestIP[line] = entries[0].IP
+		}
+	}
+
+	dataBytes, _ := json.MarshalIndent(output, "", "  ")
+	jsonFile := "cloudflare_ips.json"
+	os.WriteFile(jsonFile, dataBytes, 0644)
+	fmt.Printf("✅ JSON 文件已生成: %s\n", jsonFile)
+
+	// 更新华为云 DNS
+	for line, recordID := range cfg.ARecord {
+		ips := []string{}
+		if entries, ok := fullData[line]; ok && len(entries) > 0 {
+			for _, e := range entries {
+				ips = append(ips, e.IP)
+			}
+		}
+		if len(ips) == 0 {
+			fmt.Printf("❌ %s DNS 更新失败: 无 IP\n", line)
+			continue
+		}
+
+		auth := basic.NewCredentialsBuilder().
+			WithAk(cfg.AccessKey).
+			WithSk(cfg.SecretKey).
+			WithProjectId(cfg.ProjectID).
+			Build()
+
+		client := v2.DnsClientBuilder().
+			WithRegion(v2.RegionValue(cfg.Region)).
+			WithCredential(auth).
+			Build()
+
+		req := &model.UpdateRecordSetRequest{
+			ZoneId:     cfg.ZoneID,
+			RecordsetId: recordID,
+			Body: &model.UpdateRecordSetReq{
+				Name:    core.StringPtr(cfg.Subdomain + "." + cfg.Domain + "."),
+				Type:    core.StringPtr("A"),
+				Records: &ips,
+				Ttl:     core.Int32Ptr(1),
+			},
+		}
+
+		_, err := client.UpdateRecordSet(req)
+		if err != nil {
+			fmt.Printf("❌ %s DNS 更新失败: %v\n", line, err)
+			continue
+		}
+		fmt.Printf("✅ %s DNS 已更新: %v\n", line, ips)
+	}
+}
+
 func fetchCloudflareIPs(url string) (map[string][]IPEntry, error) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -83,7 +165,6 @@ func fetchCloudflareIPs(url string) (map[string][]IPEntry, error) {
 	}
 
 	fullData := make(map[string][]IPEntry)
-
 	trs := []*html.Node{}
 	for c := table.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode && c.Data == "tbody" {
@@ -133,7 +214,6 @@ func fetchCloudflareIPs(url string) (map[string][]IPEntry, error) {
 		fullData[entry.Line] = append(fullData[entry.Line], entry)
 	}
 
-	// 按延迟升序，速度降序排序
 	for k := range fullData {
 		sort.Slice(fullData[k], func(i, j int) bool {
 			if fullData[k][i].Latency != fullData[k][j].Latency {
@@ -155,95 +235,4 @@ func getNodeText(n *html.Node) string {
 		buf.WriteString(getNodeText(c))
 	}
 	return buf.String()
-}
-
-// 更新华为云 DNS
-func updateHuaweiDNS(cfg HuaweiDNSConfig, line string, ips []string) error {
-	auth := basic.NewCredentialsBuilder().
-		WithAk(cfg.AccessKey).
-		WithSk(cfg.SecretKey).
-		WithProjectId(cfg.ProjectID).
-		Build()
-
-	client := v2.NewDnsClient(
-		v2.DnsClientBuilder().
-			WithRegion(core.RegionValue(cfg.Region)).
-			WithCredential(auth),
-	)
-
-	recordID := ""
-	if line == "电信" {
-		recordID = cfg.ARecord["ct"]
-	} else if line == "联通" {
-		recordID = cfg.ARecord["cu"]
-	} else if line == "移动" {
-		recordID = cfg.ARecord["cm"]
-	} else {
-		return fmt.Errorf("未知运营商: %s", line)
-	}
-
-	req := &model.UpdateRecordSetRequest{
-		RecordsetId: recordID,
-		ZoneId:      cfg.ZoneID,
-		UpdateRecordSet: &model.UpdateRecordSetReq{
-			Name:    cfg.Subdomain + "." + cfg.Domain + ".",
-			Type:    "A",
-			Records: ips,
-			Ttl:     1,
-		},
-	}
-
-	_, err := client.UpdateRecordSet(req)
-	return err
-}
-
-func main() {
-	url := "https://www.cloudflare.com/zh-cn/ips/"
-	data, err := fetchCloudflareIPs(url)
-	if err != nil {
-		log.Fatalf("抓取 Cloudflare IP 失败: %v", err)
-	}
-
-	// 输出 JSON
-	output := OutputData{
-		GeneratedAt:  fmt.Sprintf("%v", os.Args),
-		FullDataList: data,
-	}
-	file, _ := json.MarshalIndent(output, "", "  ")
-	_ = ioutil.WriteFile("cloudflare_ips.json", file, 0644)
-	log.Println("✅ JSON 文件已生成: cloudflare_ips.json")
-
-	// 配置华为云 DNS
-	cfg := HuaweiDNSConfig{
-		ProjectID: os.Getenv("HUAWEI_PROJECT_ID"),
-		AccessKey: os.Getenv("HUAWEI_ACCESS_KEY"),
-		SecretKey: os.Getenv("HUAWEI_SECRET_KEY"),
-		Region:    os.Getenv("HUAWEI_REGION"),
-		ZoneID:    os.Getenv("ZONE_ID"),
-		Domain:    os.Getenv("DOMAIN"),
-		Subdomain: os.Getenv("SUBDOMAIN"),
-		ARecord: map[string]string{
-			"ct": os.Getenv("CT_A_ID"),
-			"cu": os.Getenv("CU_A_ID"),
-			"cm": os.Getenv("CM_A_ID"),
-		},
-	}
-
-	for line, list := range data {
-		if len(list) == 0 {
-			continue
-		}
-		bestIPs := []string{}
-		for _, ip := range list {
-			bestIPs = append(bestIPs, ip.IP)
-		}
-		err := updateHuaweiDNS(cfg, line, bestIPs)
-		if err != nil {
-			log.Printf("❌ %s DNS 更新失败: %v", line, err)
-		} else {
-			log.Printf("✅ %s DNS 已更新: %v", line, bestIPs)
-		}
-	}
-
-	log.Println("✅ DNS 更新完成。")
 }
