@@ -103,8 +103,8 @@ func fetchCloudflareIPs() (map[string][]IPEntry, map[string]string, error) {
 	return fullData, bestIP, nil
 }
 
-func stringPtr(s string) *string { return &s }
-func int32Ptr(i int32) *int32    { return &i }
+func stringPtr(s string) *string       { return &s }
+func int32Ptr(i int32) *int32          { return &i }
 func strSlicePtr(s []string) *[]string { return &s }
 
 func updateHuaweiDNS(operator string, ips []string) error {
@@ -114,9 +114,12 @@ func updateHuaweiDNS(operator string, ips []string) error {
 		WithProjectId(os.Getenv("HUAWEI_PROJECT_ID")).
 		Build()
 
+	// 手动创建 Region
+	myRegion := region.NewRegion("ap-southeast-1", "https://dns.ap-southeast-1.myhuaweicloud.com")
+
 	client := dnsv2.NewDnsClient(
 		dnsv2.DnsClientBuilder().
-			WithRegion(region.CnSouthEast1). // 使用固定区域或 os.Getenv("HUAWEI_REGION")
+			WithRegion(myRegion).
 			WithCredential(auth).
 			Build(),
 	)
@@ -143,7 +146,7 @@ func updateHuaweiDNS(operator string, ips []string) error {
 	}
 
 	req := &model.UpdateRecordSetRequest{
-		ZoneId:      recordID, // 注意：这里填 ZoneId，必须正确
+		ZoneId:      recordID,
 		RecordsetId: recordID,
 		Body:        reqBody,
 	}
