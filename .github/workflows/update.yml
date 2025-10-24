@@ -1,8 +1,8 @@
-name: Cloudflare IP -> HuaweiDNS
+name: Update Cloudflare IPs & Huawei DNS
 
 on:
   schedule:
-    - cron: "*/10 * * * *" # 每10分钟
+    - cron: "*/30 * * * *"  # 每30分钟运行
   workflow_dispatch:
 
 jobs:
@@ -10,21 +10,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: "1.22"
 
-      - name: Install dependencies
-        run: go get github.com/PuerkitoBio/goquery
+      - name: Build Go script
+        run: go build -o cloudflare_fetch main.go
 
-      - name: Run DNS update
-        run: go run main.go
+      - name: Run Go script
         env:
-          OUTPUT_FILE: cloudflare_ips.json
-          GITHUB_OUTPUT: ${{ github.output }}
           HUAWEI_PROJECT_ID: ${{ secrets.HUAWEI_PROJECT_ID }}
           HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
           HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
@@ -37,3 +34,12 @@ jobs:
           CT_AAAA_ID: ${{ secrets.CT_AAAA_ID }}
           CU_AAAA_ID: ${{ secrets.CU_AAAA_ID }}
           CM_AAAA_ID: ${{ secrets.CM_AAAA_ID }}
+        run: ./cloudflare_fetch
+
+      - name: Commit cloudflare_ips.json
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git add cloudflare_ips.json
+          git commit -m "📡 更新 cloudflare_ips.json [skip ci]" || echo "No changes to commit"
+          git push
