@@ -195,7 +195,7 @@ func main() {
 		ProjectID: os.Getenv("HUAWEI_PROJECT_ID"),
 		AccessKey: os.Getenv("HUAWEI_ACCESS_KEY"),
 		SecretKey: os.Getenv("HUAWEI_SECRET_KEY"),
-		Region:    "cn-north-4",
+		Region:    "ap-southeast-1",
 		ZoneID:    os.Getenv("ZONE_ID"),
 		Domain:    os.Getenv("DOMAIN"),
 		Subdomain: os.Getenv("SUBDOMAIN"),
