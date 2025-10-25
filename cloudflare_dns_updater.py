@@ -182,18 +182,6 @@ if __name__ == "__main__":
     with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
         json.dump({"最优IP": best_ips, "完整数据": full_data}, f, ensure_ascii=False, indent=4)
     print("JSON 文件保存到 cloudflare_bestip.json")
-
-    # 保存 TXT
-    #now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    #txt_file = "cloudflare_bestip.txt"
-    #with open(txt_file, "w", encoding="utf-8") as f:
-    #    for line in ["默认", "电信", "联通", "移动", "IPv6"]:
-    #        f.write(f"{line}\n{now}\n")
-    #        ips = best_ips.get(line, [])
-    #        for ip in ips:
-    #            f.write(f"{ip}#{line}\n")
-    #        f.write("\n")
-    #print(f"TXT 文件保存到 {txt_file}")
     
 # 保存 TXT 文件
 now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
