@@ -56,61 +56,64 @@ class HuaWeiApi:
         sdk_line = line_map.get(line, "default_view")
         return [r for r in resp.recordsets if getattr(r, "line", None) == sdk_line]
 
-    def set_records(self, domain, ips, record_type="A", line="默认", ttl=300):
-        if not ips:
-            print(f"{record_type} | {line} 无有效 IP，跳过更新")
-            return
+def set_records(self, domain, ips, record_type="A", line="默认", ttl=300):
+    if not ips:
+        print(f"{record_type} | {line} 无有效 IP，跳过更新")
+        return
 
-        if record_type == "A":
-            ips = [ip for ip in ips if "." in ip]
-        elif record_type == "AAAA":
-            ips = [ip for ip in ips if ":" in ip]
+    if record_type == "A":
+        ips = [ip for ip in ips if "." in ip]
+    elif record_type == "AAAA":
+        ips = [ip for ip in ips if ":" in ip]
 
-        if not ips:
-            print(f"{record_type} | {line} 无匹配 IP 格式，跳过")
-            return
+    if not ips:
+        print(f"{record_type} | {line} 无匹配 IP 格式，跳过")
+        return
 
-        zone_key = domain.rstrip('.')
-        zone_id = self.zone_id.get(zone_key)
-        if zone_id is None:
-            print(f"Domain {domain} not found in zone")
-            return
+    # 去重
+    ips = list(dict.fromkeys(ips))[:MAX_IP_PER_LINE]
 
-        existing = self.list_records(domain, record_type, line)
-        ips = ips[:MAX_IP_PER_LINE]
+    zone_key = domain.rstrip('.')
+    zone_id = self.zone_id.get(zone_key)
+    if zone_id is None:
+        print(f"Domain {domain} not found in zone")
+        return
 
-        if existing:
-            for r in existing:
-                existing_vals = getattr(r, "records", []) or []
-                if sorted(existing_vals) != sorted(ips):
-                    req = UpdateRecordSetRequest()
-                    req.zone_id = zone_id
-                    req.recordset_id = r.id
-                    req.body = UpdateRecordSetReq(
-                        name=r.name,
-                        type=record_type,
-                        ttl=ttl,
-                        records=ips
-                    )
-                    self.client.update_record_set(req)
-                    print(f"更新 {line} {record_type} => {ips}")
-                else:
-                    print(f"{line} {record_type} 无变化，跳过")
-        else:
-            req = CreateRecordSetRequest()
-            req.zone_id = zone_id
-            req.body = {
-                "name": f"{domain}.",
-                "type": record_type,
-                "ttl": ttl,
-                "records": ips,
-                "line": ("default_view" if line == "默认" else
-                         ("Dianxin" if line == "电信" else
-                          ("Liantong" if line == "联通" else
-                           ("Yidong" if line == "移动" else "default_view"))))
-            }
-            self.client.create_record_set(req)
-            print(f"创建 {line} {record_type} => {ips}")
+    existing = self.list_records(domain, record_type, line)
+
+    if existing:
+        for r in existing:
+            existing_vals = getattr(r, "records", []) or []
+            existing_vals = list(dict.fromkeys(existing_vals))  # 去重
+            if sorted(existing_vals) != sorted(ips):
+                req = UpdateRecordSetRequest()
+                req.zone_id = zone_id
+                req.recordset_id = r.id
+                req.body = UpdateRecordSetReq(
+                    name=r.name,
+                    type=record_type,
+                    ttl=ttl,
+                    records=ips
+                )
+                self.client.update_record_set(req)
+                print(f"更新 {line} {record_type} => {ips}")
+            else:
+                print(f"{line} {record_type} 无变化，跳过")
+    else:
+        req = CreateRecordSetRequest()
+        req.zone_id = zone_id
+        req.body = {
+            "name": f"{domain}.",
+            "type": record_type,
+            "ttl": ttl,
+            "records": ips,
+            "line": ("default_view" if line == "默认" else
+                     ("Dianxin" if line == "电信" else
+                      ("Liantong" if line == "联通" else
+                       ("Yidong" if line == "移动" else "default_view"))))
+        }
+        self.client.create_record_set(req)
+        print(f"创建 {line} {record_type} => {ips}")
 
 def fetch_cloudflare_ips():
     """
