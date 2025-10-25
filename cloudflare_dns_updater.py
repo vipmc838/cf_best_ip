@@ -178,11 +178,14 @@ if __name__ == "__main__":
     ip_list_v6 = best_ips.get("IPv6", [])
     hw.set_records(full_domain, ip_list_v6, record_type="AAAA", line="默认")
 
-    # 保存结果
-     out = {"最优IP": best_ips, "完整数据": full_data}
-     with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
-         json.dump(out, f, ensure_ascii=False, indent=4)
-     print("结果保存到 cloudflare_bestip.json")
+    # 保存 JSON
+    out = {
+        "最优IP": best_ips,
+        "完整数据": full_data
+    }
+    with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=4)
+    print("JSON 文件保存到 cloudflare_bestip.json")
 
     # 保存 TXT
     now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
