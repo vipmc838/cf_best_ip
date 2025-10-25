@@ -156,70 +156,48 @@ def fetch_cloudflare_ips():
     return full, best
 
 
-if __name__ == "__main__":
-    full_domain = os.environ.get("FULL_DOMAIN")
+def save_txt(best_ips, filename="cloudflare_bestip.txt"):
+    now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    lines_order = ["默认","电信","联通","移动","IPv6"]
+    with open(filename,"w",encoding="utf-8") as f:
+        for line in lines_order:
+            ips = best_ips.get(line,[])
+            if not ips: continue
+            f.write(f"{now}\n")
+            for ip in ips:
+                if line=="IPv6":
+                    f.write(f"[{ip}]#{line}\n")
+                else:
+                    f.write(f"{ip}#{line}\n")
+            f.write("\n")
+    print(f"TXT 文件保存到 {filename}")
+
+if __name__=="__main__":
     ak = os.environ.get("HUAWEI_ACCESS_KEY")
     sk = os.environ.get("HUAWEI_SECRET_KEY")
-    region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
+    region = os.environ.get("HUAWEI_REGION","ap-southeast-1")
+    full_domain = os.environ.get("FULL_DOMAIN")  # 例如 cdn.akk.pp.ua
 
-    if not all([full_domain, ak, sk]):
-        print("环境变量 FULL_DOMAIN / HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY 必须设置")
+    if not all([ak, sk, full_domain]):
+        print("环境变量 HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY / FULL_DOMAIN 必须设置")
         exit(1)
 
     hw = HuaWeiApi(ak, sk, region)
     full_data, best_ips = fetch_cloudflare_ips()
 
-    # 更新 IPv4
-    for line in ["默认", "电信", "联通", "移动"]:
-        ip_list = best_ips.get(line, [])
-        hw.set_records(full_domain, ip_list, record_type="A", line=line)
-
-    # 更新 IPv6
-    ip_list_v6 = best_ips.get("IPv6", [])
-    hw.set_records(full_domain, ip_list_v6, record_type="AAAA", line="默认")
-
-    # 保存 JSON
-    out = {
-        "最优IP": best_ips,
-        "完整数据": full_data
-    }
-    with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, indent=4)
-    print("JSON 文件保存到 cloudflare_bestip.json")
+    # 更新华为云 DNS
+    for line in ["默认","电信","联通","移动"]:
+        ip_list = best_ips.get(line,[])
+        hw.set_records(full_domain, "@", ip_list, record_type="A", line=line)
+    for line in ["IPv6"]:
+        ip_list = best_ips.get(line,[])
+        hw.set_records(full_domain, "@", ip_list, record_type="AAAA", line=line)
 
     # 保存 TXT
-    #now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    #txt_lines = []
-    #for line in ["默认", "电信", "联通", "移动", "IPv6"]:
-    #    ips = best_ips.get(line, [])
-    #    if not ips:
-    #        continue
-    #    txt_lines.append(now)
-    #    for ip in ips:
-    #        txt_lines.append(f"{ip}#{line}")
-    #    txt_lines.append("")  # 空行分隔不同线路
+    save_txt(best_ips)
 
-    #with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
-    #    f.write("\n".join(txt_lines))
-    #print("TXT 文件保存到 cloudflare_bestip.txt")
-
-    # 输出 TXT
-    txt_lines = []
-    for line in ["默认","电信","联通","移动"]:
-        ips = best_ips.get(line,[])
-        if not ips:
-            continue
-        txt_lines.append(now)
-        for ip in ips:
-            txt_lines.append(f"{ip}#{line}")
-        txt_lines.append("")
-
-    if ip_list_v6:
-        txt_lines.append(now)
-        for ip in ip_list_v6:
-            txt_lines.append(f"[{ip}]#IPv6")
-        txt_lines.append("")
-
-    with open("cloudflare_bestip.txt","w",encoding="utf-8") as f:
-        f.write("\n".join(txt_lines))
-    print("TXT 文件保存到 cloudflare_bestip.txt")
+    # 保存 JSON
+    out = {"最优IP":best_ips,"完整数据":full_data}
+    with open("cloudflare_bestip.json","w",encoding="utf-8") as f:
+        json.dump(out,f,ensure_ascii=False,indent=4)
+    print("JSON 文件保存到 cloudflare_bestip.json")
