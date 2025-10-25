@@ -157,28 +157,26 @@ def fetch_cloudflare_ips():
 
 
 if __name__ == "__main__":
+    full_domain = os.environ.get("FULL_DOMAIN")  # 例如 cdn.akk.pp.ua
     ak = os.environ.get("HUAWEI_ACCESS_KEY")
     sk = os.environ.get("HUAWEI_SECRET_KEY")
     region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
-    full_domain = os.environ.get("FULL_DOMAIN")
-    subdomain = "@" if full_domain.count(".") == 1 else full_domain.split(".")[0]
-    domain = full_domain if subdomain == "@" else ".".join(full_domain.split(".")[1:])
 
-    if not all([ak, sk, full_domain]):
+    if not all([full_domain, ak, sk]):
         print("环境变量 FULL_DOMAIN / HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY 必须设置")
         exit(1)
 
     hw = HuaWeiApi(ak, sk, region)
     full_data, best_ips = fetch_cloudflare_ips()
 
-    # 更新 A 记录
+    # 更新 IPv4
     for line in ["默认", "电信", "联通", "移动"]:
         ip_list = best_ips.get(line, [])
-        hw.set_records(domain, subdomain, ip_list, record_type="A", line=line)
+        hw.set_records(full_domain, ip_list, record_type="A", line=line)
 
-    # 更新 AAAA 记录
+    # 更新 IPv6
     ip_list_v6 = best_ips.get("IPv6", [])
-    hw.set_records(domain, subdomain, ip_list_v6, record_type="AAAA", line="IPv6")
+    hw.set_records(full_domain, ip_list_v6, record_type="AAAA", line="默认")
 
     # 保存 JSON
     with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
