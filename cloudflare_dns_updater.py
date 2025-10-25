@@ -186,13 +186,34 @@ if __name__ == "__main__":
     print("JSON 文件保存到 cloudflare_bestip.json")
 
     # 保存 TXT
-    now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    txt_file = "cloudflare_bestip.txt"
-    with open(txt_file, "w", encoding="utf-8") as f:
-        for line in ["默认", "电信", "联通", "移动", "IPv6"]:
-            f.write(f"{line}\n{now}\n")
-            ips = best_ips.get(line, [])
-            for ip in ips:
-                f.write(f"{ip}#{line}\n")
-            f.write("\n")
-    print(f"TXT 文件保存到 {txt_file}")
+    #now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    #txt_file = "cloudflare_bestip.txt"
+    #with open(txt_file, "w", encoding="utf-8") as f:
+    #    for line in ["默认", "电信", "联通", "移动", "IPv6"]:
+    #        f.write(f"{line}\n{now}\n")
+    #        ips = best_ips.get(line, [])
+    #        for ip in ips:
+    #            f.write(f"{ip}#{line}\n")
+    #        f.write("\n")
+    #print(f"TXT 文件保存到 {txt_file}")
+    
+# 保存 TXT 文件
+now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+txt_lines = []
+
+for line in ["默认", "电信", "联通", "移动", "IPv6"]:
+    ip_list = best_ips.get(line, [])
+    if not ip_list:
+        continue
+    txt_lines.append(now)
+    for ip in ip_list:
+        if ":" in ip:  # IPv6
+            txt_lines.append(f"[{ip}]#{line}")
+        else:
+            txt_lines.append(f"{ip}#{line}")
+    txt_lines.append("")  # 每组之间空行
+
+with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
+    f.write("\n".join(txt_lines))
+
+print("TXT 文件保存到 cloudflare_bestip.txt")
