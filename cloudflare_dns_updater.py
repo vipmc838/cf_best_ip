@@ -21,8 +21,8 @@ MAX_IP_PER_LINE = 50
 class HuaWeiApi:
     def __init__(self, ak, sk, region="ap-southeast-1"):
         self.client = DnsClient.new_builder()\
-            。with_credentials(BasicCredentials(ak, sk))\
-            。with_region(DnsRegion.value_of(region)).build()
+            .with_credentials(BasicCredentials(ak, sk))\
+            .with_region(DnsRegion.value_of(region)).build()
         self.zone_id = self._get_zones()
 
     def _get_zones(self):
