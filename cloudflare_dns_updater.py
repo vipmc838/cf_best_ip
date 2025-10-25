@@ -32,24 +32,23 @@ class HuaWeiApi:
         resp = self.client.list_public_zones(req)
         zones = {}
         for z in resp.zones:
-            name = z.name.rstrip('.')  # 去掉末尾的点
+            name = z.name.rstrip('.')
             zones[name] = z.id
         return zones
 
-    def list_records(self, domain, sub_domain, record_type="A", line="默认"):
+    def list_records(self, domain, record_type="A", line="默认"):
         zone_key = domain.rstrip('.')
         zone_id = self.zone_id.get(zone_key)
         if zone_id is None:
             raise KeyError(f"Domain {domain} not in Huawei zone list")
         req = ListRecordSetsWithLineRequest()
         req.zone_id = zone_id
-        req.name = f"{sub_domain}.{domain}." if sub_domain != "@" else f"{domain}."
+        req.name = f"{domain}."
         req.type = record_type
         req.limit = 100
         resp = self.client.list_record_sets_with_line(req)
         line_map = {
             "默认": "default_view",
-            "全网": "default_view",
             "电信": "Dianxin",
             "联通": "Liantong",
             "移动": "Yidong"
@@ -57,7 +56,7 @@ class HuaWeiApi:
         sdk_line = line_map.get(line, "default_view")
         return [r for r in resp.recordsets if getattr(r, "line", None) == sdk_line]
 
-    def set_records(self, domain, sub_domain, ips, record_type="A", line="默认", ttl=300):
+    def set_records(self, domain, ips, record_type="A", line="默认", ttl=300):
         if not ips:
             print(f"{record_type} | {line} 无有效 IP，跳过更新")
             return
@@ -77,7 +76,7 @@ class HuaWeiApi:
             print(f"Domain {domain} not found in zone")
             return
 
-        existing = self.list_records(domain, sub_domain, record_type, line)
+        existing = self.list_records(domain, record_type, line)
         ips = ips[:MAX_IP_PER_LINE]
 
         if existing:
@@ -101,11 +100,11 @@ class HuaWeiApi:
             req = CreateRecordSetRequest()
             req.zone_id = zone_id
             req.body = {
-                "name": f"{sub_domain}.{domain}." if sub_domain != "@" else f"{domain}.",
+                "name": f"{domain}.",
                 "type": record_type,
                 "ttl": ttl,
                 "records": ips,
-                "line": ("default_view" if line in ("默认","全网") else
+                "line": ("default_view" if line == "默认" else
                          ("Dianxin" if line == "电信" else
                           ("Liantong" if line == "联通" else
                            ("Yidong" if line == "移动" else "default_view"))))
@@ -120,19 +119,17 @@ def fetch_cloudflare_ips():
     url = "https://api.uouin.com/cloudflare.html"
     session = HTMLSession()
     r = session.get(url, timeout=20)
-    r.html.render(sleep=6, timeout=20)  # 渲染 JS，等待6秒
+    r.html.render(sleep=6, timeout=20)
 
     soup = BeautifulSoup(r.html.html, "html.parser")
     table = soup.find("table", {"class": "table-striped"})
     full = {}
     best = {
         "默认": [],
-        "全网": [],
         "电信": [],
         "联通": [],
         "移动": [],
-        "IPv6": [],
-        "IPv6全网": []
+        "IPv6": []
     }
 
     if not table:
@@ -159,18 +156,14 @@ def fetch_cloudflare_ips():
             "时间": cols[8]
         })
 
-        # 自动识别未知线路
-        if line not in best:
-            best[line] = []
-
         # 分类 IPv4 / IPv6
         if ":" in ip:
             best["IPv6"].append(ip)
-            best["IPv6全网"].append(ip)
         else:
+            # 多线或全网统一为默认
+            if line not in ("电信", "联通", "移动", "默认"):
+                line = "默认"
             best[line].append(ip)
-            if line not in ("电信", "联通", "移动", "默认", "全网"):
-                best["全网"].append(ip)
             best["默认"].append(ip)
 
     # 限制最多 50 IP
@@ -181,34 +174,23 @@ def fetch_cloudflare_ips():
 
 
 if __name__ == "__main__":
+    full_domain = os.environ.get("FULL_DOMAIN")
     ak = os.environ.get("HUAWEI_ACCESS_KEY")
     sk = os.environ.get("HUAWEI_SECRET_KEY")
     region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
-    domain = os.environ.get("DOMAIN")
-    subdomain = os.environ.get("SUBDOMAIN")
 
-    if not all([ak, sk, domain, subdomain]):
-        print("环境变量 HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY / DOMAIN / SUBDOMAIN 必须设置")
+    if not all([ak, sk, full_domain]):
+        print("环境变量 FULL_DOMAIN / HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY 必须设置")
         exit(1)
 
     hw = HuaWeiApi(ak, sk, region)
     full_data, best_ips = fetch_cloudflare_ips()
 
-    processed = set()
-    for line in ["默认", "电信", "联通", "移动", "全网"]:
-        if line == "全网" and "默认" in processed:
-            continue
-        processed.add(line)
+    for line in ["默认", "电信", "联通", "移动"]:
         ip_list = best_ips.get(line, [])
-        hw.set_records(domain, subdomain, ip_list, record_type="A", line=line)
+        hw.set_records(full_domain, ip_list, record_type="A", line=line)
 
-    processed_v6 = set()
-    for line in ["IPv6", "IPv6全网"]:
-        if line == "IPv6全网" and "IPv6" in processed_v6:
-            continue
-        processed_v6.add(line)
-        ip_list = best_ips.get(line, [])
-        hw.set_records(domain, subdomain, ip_list, record_type="AAAA", line=line)
+    hw.set_records(full_domain, best_ips.get("IPv6", []), record_type="AAAA", line="默认")
 
     out = {
         "最优IP": best_ips,
