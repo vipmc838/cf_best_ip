@@ -156,7 +156,7 @@ def fetch_cloudflare_ips():
 
 
 if __name__ == "__main__":
-    full_domain = os.environ.get("FULL_DOMAIN")  # 例如 cdn.akk.pp.ua
+    full_domain = os.environ.get("FULL_DOMAIN")
     ak = os.environ.get("HUAWEI_ACCESS_KEY")
     sk = os.environ.get("HUAWEI_SECRET_KEY")
     region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
