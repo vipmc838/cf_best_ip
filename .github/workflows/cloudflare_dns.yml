@@ -31,18 +31,20 @@ jobs:
       - name: 运行脚本
         run: python cloudflare_dns_updater.py
 
-      - name: 保存 JSON
+      - name: 保存 JSON & TXT 文件
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-ip-data
-          path: cloudflare_bestip.json
+          path: |
+            cloudflare_bestip.json
+            cloudflare_bestip.txt
           retention-days: 7
-          
-      - name: 提交 Cloudflare IP JSON
+
+      - name: 提交 JSON & TXT 文件到仓库
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add cloudflare_bestip.json
-          git commit -m "更新 cloudflare_bestip.json [skip ci]" || echo "No changes to commit"
+          git add cloudflare_bestip.json cloudflare_bestip.txt
+          git commit -m "更新 Cloudflare IP [skip ci]" || echo "No changes to commit"
           git pull --rebase origin HEAD || true
-          git push origin HEAD || echo "Push failed, possibly due to no changes"
+          git push origin HEAD || echo "Push 失败，可能没有变化"
