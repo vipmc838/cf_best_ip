@@ -179,24 +179,23 @@ if __name__ == "__main__":
     hw.set_records(full_domain, ip_list_v6, record_type="AAAA", line="默认")
 
     # 保存结果
-    # out = {"最优IP": best_ips, "完整数据": full_data}
-    # with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
-    #     json.dump(out, f, ensure_ascii=False, indent=4)
-    # print("结果保存到 cloudflare_bestip.json")
-
-    # 保存 JSON
-    with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
-        json.dump({"最优IP": best_ips, "完整数据": full_data}, f, ensure_ascii=False, indent=4)
-    print("JSON 文件保存到 cloudflare_bestip.json")
+     out = {"最优IP": best_ips, "完整数据": full_data}
+     with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
+         json.dump(out, f, ensure_ascii=False, indent=4)
+     print("结果保存到 cloudflare_bestip.json")
 
     # 保存 TXT
     now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    txt_file = "cloudflare_bestip.txt"
-    with open(txt_file, "w", encoding="utf-8") as f:
-        for line in ["默认", "电信", "联通", "移动", "IPv6"]:
-            f.write(f"{line}\n{now}\n")
-            ips = best_ips.get(line, [])
-            for ip in ips:
-                f.write(f"{ip}#{line}\n")
-            f.write("\n")
-    print(f"TXT 文件保存到 {txt_file}")
+    txt_lines = []
+    for line in ["默认", "电信", "联通", "移动", "IPv6"]:
+        ips = best_ips.get(line, [])
+        if not ips:
+            continue
+        txt_lines.append(now)
+        for ip in ips:
+            txt_lines.append(f"{ip}#{line}")
+        txt_lines.append("")  # 空行分隔不同线路
+
+    with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(txt_lines))
+    print("TXT 文件保存到 cloudflare_bestip.txt")
