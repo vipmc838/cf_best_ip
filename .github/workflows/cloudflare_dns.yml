@@ -13,11 +13,11 @@ jobs:
   update_dns:
     runs-on: ubuntu-latest
     env:
-      DOMAIN: cdn.orgv.me
-      SUBDOMAIN: cf
+      DOMAIN: ${{ secrets.DOMAIN }}
+      SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
       HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
       HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
-      HUAWEI_REGION: ap-southeast-1
+      HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
     steps:
       - uses: actions/checkout@v4
 
