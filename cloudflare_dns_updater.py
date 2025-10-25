@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import json
-import requests
+from requests_html import HTMLSession
 from bs4 import BeautifulSoup
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
@@ -114,10 +114,15 @@ class HuaWeiApi:
             print(f"创建 {line} {record_type} => {ips}")
 
 def fetch_cloudflare_ips():
+    """
+    使用 requests-html 渲染页面获取最新 Cloudflare IP
+    """
     url = "https://api.uouin.com/cloudflare.html"
-    resp = requests.get(url, timeout=15)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    session = HTMLSession()
+    r = session.get(url, timeout=20)
+    r.html.render(sleep=6, timeout=20)  # 渲染 JS，等待6秒
+
+    soup = BeautifulSoup(r.html.html, "html.parser")
     table = soup.find("table", {"class": "table-striped"})
     full = {}
     best = {
@@ -164,7 +169,6 @@ def fetch_cloudflare_ips():
             best["IPv6全网"].append(ip)
         else:
             best[line].append(ip)
-            # 未知线路或“多线”视为全网
             if line not in ("电信", "联通", "移动", "默认", "全网"):
                 best["全网"].append(ip)
             best["默认"].append(ip)
