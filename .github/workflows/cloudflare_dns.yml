@@ -2,7 +2,7 @@ name: Cloudflare IP + 华为云 DNS
 
 on:
   schedule:
-    - cron: '0 */1 * * *' # 每小时
+    - cron: '0 */1 * * *' # 每小时运行一次
   workflow_dispatch:
 
 permissions:
@@ -38,12 +38,11 @@ jobs:
           name: cloudflare-ip-data
           path: cloudflare_bestip.json
           retention-days: 7
-          
+
       - name: 提交 Cloudflare IP JSON
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add cloudflare_bestip.json
           git commit -m "更新 cloudflare_bestip.json [skip ci]" || echo "No changes to commit"
-          git pull --rebase origin HEAD || true
-          git push origin HEAD || echo "Push failed, possibly due to no changes"
+          git push origin HEAD
