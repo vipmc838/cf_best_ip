@@ -13,8 +13,7 @@ jobs:
   update_dns:
     runs-on: ubuntu-latest
     env:
-      DOMAIN: ${{ secrets.DOMAIN }}
-      SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
+      FULL_DOMAIN: ${{ secrets.FULL_DOMAIN }}
       HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
       HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
       HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
