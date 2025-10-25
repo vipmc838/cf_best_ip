@@ -174,11 +174,11 @@ if __name__ == "__main__":
     # 更新 A 记录
     for line in ["默认", "电信", "联通", "移动"]:
         ip_list = best_ips.get(line, [])
-        hw.set_records(domain, subdomain, ip_list, record_type="A", line=line)
+        hw.set_records(domain, subdomain, ip_list, "A", line)
 
     # 更新 AAAA 记录
     ip_list_v6 = best_ips.get("IPv6", [])
-    hw.set_records(domain, subdomain, ip_list_v6, record_type="AAAA", line="IPv6")
+    hw.set_records(domain, subdomain, ip_list, "AAAA", line)
 
     # 保存 JSON
     with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
