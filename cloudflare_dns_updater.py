@@ -21,8 +21,8 @@ MAX_IP_PER_LINE = 50
 class HuaWeiApi:
     def __init__(self, ak, sk, region="ap-southeast-1"):
         self.client = DnsClient.new_builder()\
-            .with_credentials(BasicCredentials(ak, sk))\
-            .with_region(DnsRegion.value_of(region)).build()
+            。with_credentials(BasicCredentials(ak, sk))\
+            。with_region(DnsRegion.value_of(region)).build()
         self.zone_id = self._get_zones()
 
     def _get_zones(self):
@@ -188,17 +188,38 @@ if __name__ == "__main__":
     print("JSON 文件保存到 cloudflare_bestip.json")
 
     # 保存 TXT
-    now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    #now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    #txt_lines = []
+    #for line in ["默认", "电信", "联通", "移动", "IPv6"]:
+    #    ips = best_ips.get(line, [])
+    #    if not ips:
+    #        continue
+    #    txt_lines.append(now)
+    #    for ip in ips:
+    #        txt_lines.append(f"{ip}#{line}")
+    #    txt_lines.append("")  # 空行分隔不同线路
+
+    #with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
+    #    f.write("\n".join(txt_lines))
+    #print("TXT 文件保存到 cloudflare_bestip.txt")
+
+    # 输出 TXT
     txt_lines = []
-    for line in ["默认", "电信", "联通", "移动", "IPv6"]:
-        ips = best_ips.get(line, [])
+    for line in ["默认","电信","联通","移动"]:
+        ips = best_ips.get(line,[])
         if not ips:
             continue
         txt_lines.append(now)
         for ip in ips:
             txt_lines.append(f"{ip}#{line}")
-        txt_lines.append("")  # 空行分隔不同线路
+        txt_lines.append("")
 
-    with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
+    if ip_list_v6:
+        txt_lines.append(now)
+        for ip in ip_list_v6:
+            txt_lines.append(f"[{ip}]#IPv6")
+        txt_lines.append("")
+
+    with open("cloudflare_bestip.txt","w",encoding="utf-8") as f:
         f.write("\n".join(txt_lines))
     print("TXT 文件保存到 cloudflare_bestip.txt")
