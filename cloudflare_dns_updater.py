@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from requests_html import HTMLSession
 from bs4 import BeautifulSoup
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
@@ -21,8 +21,8 @@ MAX_IP_PER_LINE = 50
 class HuaWeiApi:
     def __init__(self, ak, sk, region="ap-southeast-1"):
         self.client = DnsClient.new_builder()\
-            .with_credentials(BasicCredentials(ak, sk))\
-            .with_region(DnsRegion.value_of(region)).build()
+            。with_credentials(BasicCredentials(ak, sk))\
+            。with_region(DnsRegion.value_of(region)).build()
         self.zone_id = self._get_zones()
 
     def _get_zones(self):
@@ -185,6 +185,7 @@ if __name__ == "__main__":
     
 # 保存 TXT 文件
 now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+china_tz = timezone(timedelta(hours=8))
 txt_lines = []
 
 for line in ["默认", "电信", "联通", "移动", "IPv6"]:
