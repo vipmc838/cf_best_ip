@@ -182,25 +182,25 @@ if __name__ == "__main__":
     with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
         json.dump({"最优IP": best_ips, "完整数据": full_data}, f, ensure_ascii=False, indent=4)
     print("JSON 文件保存到 cloudflare_bestip.json")
-    
-# 保存 TXT 文件
-now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-china_tz = timezone(timedelta(hours=8))
-txt_lines = []
 
-for line in ["默认", "电信", "联通", "移动", "IPv6"]:
-    ip_list = best_ips.get(line, [])
-    if not ip_list:
-        continue
-    txt_lines.append(now)
-    for ip in ip_list:
-        if ":" in ip:  # IPv6
-            txt_lines.append(f"[{ip}]#{line}")
-        else:
-            txt_lines.append(f"{ip}#{line}")
-    txt_lines.append("")  # 每组之间空行
+    # 保存 TXT 文件（使用北京时间）
+    china_tz = timezone(timedelta(hours=8))
+    now = datetime.now(china_tz).strftime("%Y/%m/%d %H:%M:%S")
+    txt_lines = []
 
-with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
-    f.write("\n".join(txt_lines))
+    for line in ["默认", "电信", "联通", "移动", "IPv6"]:
+        ip_list = best_ips.get(line, [])
+        if not ip_list:
+            continue
+        txt_lines.append(now)
+        for ip in ip_list:
+            if ":" in ip:  # IPv6
+                txt_lines.append(f"[{ip}]#{line}")
+            else:
+                txt_lines.append(f"{ip}#{line}")
+        txt_lines.append("")  # 每组之间空行
 
-print("TXT 文件保存到 cloudflare_bestip.txt")
+    with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(txt_lines))
+
+    print("TXT 文件保存到 cloudflare_bestip.txt")
