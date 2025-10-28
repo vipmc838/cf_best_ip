@@ -5,7 +5,7 @@ import json
 import sys
 import requests
 from datetime import datetime, timezone, timedelta
-from requests_html import HTMLSession
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 from huaweicloudsdkcore.auth.credentials import BasicCredentials
 from huaweicloudsdkdns.v2 import DnsClient
@@ -22,12 +22,11 @@ MAX_IP_PER_LINE = 50
 HIDE_DOMAIN = os.environ.get("HIDE_DOMAIN", "false").lower() == "true"
 
 def mask_domain(domain):
-    """隐藏域名显示（公开仓库安全）"""
+    """隐藏域名显示"""
     if not HIDE_DOMAIN or not domain:
         return domain
     parts = domain.split('.')
     if len(parts) >= 2:
-        # 只显示顶级域名，其他用 * 替代
         return f"***.{parts[-2]}.{parts[-1]}"
     return "***"
 
@@ -37,7 +36,7 @@ def send_telegram(message):
     user_id = os.environ.get("TG_USER_ID")
     
     if not bot_token or not user_id:
-        print("⚠️  TG_BOT_TOKEN 或 TG_USER_ID 未设置，跳过通知")
+        print("⚠️  Telegram 未配置")
         return False
     
     try:
@@ -52,10 +51,10 @@ def send_telegram(message):
             print("✅ Telegram 通知发送成功")
             return True
         else:
-            print(f"❌ Telegram 通知发送失败")
+            print(f"❌ Telegram 通知失败")
             return False
     except Exception as e:
-        print(f"❌ Telegram 通知异常")
+        print(f"❌ Telegram 异常: {e}")
         return False
 
 
@@ -92,10 +91,9 @@ class HuaWeiApi:
 
     def set_records(self, domain, ips, record_type="A", line="默认", ttl=300):
         if not ips:
-            print(f"{record_type} | {line} 无有效 IP，跳过更新")
+            print(f"{record_type} | {line} 无有效 IP，跳过")
             return
 
-        # 过滤 IP 类型
         if record_type == "A":
             ips = [ip for ip in ips if "." in ip]
         elif record_type == "AAAA":
@@ -105,9 +103,7 @@ class HuaWeiApi:
             print(f"{record_type} | {line} 无匹配 IP，跳过")
             return
 
-        # 去重
         ips = list(dict.fromkeys(ips))[:MAX_IP_PER_LINE]
-
         zone_id = self.zone_id.get(domain.rstrip('.'))
         if zone_id is None:
             raise Exception(f"Domain not found in zone")
@@ -130,7 +126,7 @@ class HuaWeiApi:
                     self.client.update_record_set(req)
                     print(f"✅ 更新 {line} {record_type} => {len(ips)} 个IP")
                 else:
-                    print(f"ℹ️  {line} {record_type} 无变化，跳过")
+                    print(f"ℹ️  {line} {record_type} 无变化")
         else:
             req = CreateRecordSetRequest()
             req.zone_id = zone_id
@@ -149,9 +145,7 @@ class HuaWeiApi:
 
 
 def fetch_cloudflare_ips():
-    """使用 Playwright 渲染页面获取最新 Cloudflare IP"""
-    from playwright.sync_api import sync_playwright
-    
+    """使用 Playwright 渲染页面获取 Cloudflare IP"""
     url = "https://api.uouin.com/cloudflare.html"
     print(f"🌐 访问: {url}")
     
@@ -171,8 +165,8 @@ def fetch_cloudflare_ips():
         print("📥 加载页面...")
         page.goto(url, wait_until='networkidle', timeout=30000)
         
-        print("⏱️  等待渲染...")
-        page.wait_for_timeout(6000)  # 等待 6 秒让数据加载
+        print("⏱️  等待数据渲染...")
+        page.wait_for_timeout(6000)
         
         html_content = page.content()
         browser.close()
@@ -200,7 +194,6 @@ def fetch_cloudflare_ips():
             full[line] = []
         full[line].append({"IP": ip, "带宽": cols[6], "时间": cols[8]})
 
-        # 分类 IP
         if ":" in ip:
             best["IPv6"].append(ip)
         else:
@@ -209,11 +202,10 @@ def fetch_cloudflare_ips():
             else:
                 best[line].append(ip)
 
-    # 去重 + 限制数量
     for k in best:
         best[k] = list(dict.fromkeys(best[k]))[:MAX_IP_PER_LINE]
     
-    print(f"📊 获取到 IP 数量: 默认={len(best['默认'])}, 电信={len(best['电信'])}, 联通={len(best['联通'])}, 移动={len(best['移动'])}, IPv6={len(best['IPv6'])}")
+    print(f"📊 统计: 默认={len(best['默认'])}, 电信={len(best['电信'])}, 联通={len(best['联通'])}, 移动={len(best['移动'])}, IPv6={len(best['IPv6'])}")
 
     return full, best
 
@@ -225,8 +217,8 @@ if __name__ == "__main__":
     region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
 
     if not all([full_domain, ak, sk]):
-        error_msg = "环境变量 FULL_DOMAIN / HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY 必须设置"
-        print(error_msg)
+        error_msg = "环境变量未完整设置"
+        print(f"❌ {error_msg}")
         send_telegram(f"🚨 <b>DNS 更新失败</b>\n\n❌ {error_msg}")
         sys.exit(1)
 
@@ -234,13 +226,9 @@ if __name__ == "__main__":
         masked_domain = mask_domain(full_domain)
         print(f"🚀 开始更新 DNS: {masked_domain}")
         
-        # 初始化华为云 API
         hw = HuaWeiApi(ak, sk, region)
-        
-        # 获取 Cloudflare IP
         full_data, best_ips = fetch_cloudflare_ips()
         
-        # 统计更新信息
         update_summary = []
 
         # 更新 IPv4
@@ -248,20 +236,20 @@ if __name__ == "__main__":
             ip_list = best_ips.get(line, [])
             if ip_list:
                 hw.set_records(full_domain, ip_list, record_type="A", line=line)
-                update_summary.append(f"✅ {line} A记录: {len(ip_list)} 个IP")
+                update_summary.append(f"✅ {line} A: {len(ip_list)}个")
 
         # 更新 IPv6
         ip_list_v6 = best_ips.get("IPv6", [])
         if ip_list_v6:
             hw.set_records(full_domain, ip_list_v6, record_type="AAAA", line="默认")
-            update_summary.append(f"✅ IPv6 AAAA记录: {len(ip_list_v6)} 个IP")
+            update_summary.append(f"✅ IPv6: {len(ip_list_v6)}个")
 
         # 保存 JSON
         with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
             json.dump({"最优IP": best_ips, "完整数据": full_data}, f, ensure_ascii=False, indent=4)
-        print("📄 JSON 文件保存完成")
+        print("📄 JSON 已保存")
 
-        # 保存 TXT 文件
+        # 保存 TXT
         china_tz = timezone(timedelta(hours=8))
         now = datetime.now(china_tz).strftime("%Y/%m/%d %H:%M:%S")
         txt_lines = []
@@ -272,7 +260,7 @@ if __name__ == "__main__":
                 continue
             txt_lines.append(now)
             for ip in ip_list:
-                if ":" in ip:  # IPv6
+                if ":" in ip:
                     txt_lines.append(f"[{ip}]#{line}")
                 else:
                     txt_lines.append(f"{ip}#{line}")
@@ -280,9 +268,8 @@ if __name__ == "__main__":
 
         with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
             f.write("\n".join(txt_lines))
-        print("📄 TXT 文件保存完成")
+        print("📄 TXT 已保存")
         
-        # 发送成功通知
         success_msg = f"""✅ <b>DNS 更新成功</b>
 
 📋 域名: <code>{masked_domain}</code>
@@ -291,7 +278,7 @@ if __name__ == "__main__":
 {chr(10).join(update_summary)}
 """
         send_telegram(success_msg)
-        print("✅ DNS 更新完成")
+        print("✅ 完成")
 
     except Exception as e:
         error_msg = str(e)
@@ -305,8 +292,6 @@ if __name__ == "__main__":
 📋 域名: <code>{mask_domain(full_domain)}</code>
 🕐 时间: {now}
 ❌ 错误: <code>{error_msg}</code>
-
-请检查日志！
 """
         send_telegram(fail_msg)
         sys.exit(1)
