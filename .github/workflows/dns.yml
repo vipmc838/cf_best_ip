@@ -1,0 +1,179 @@
+name: 🌐 Cloudflare IP 优选 + 华为云 DNS 更新
+
+on:
+  schedule:
+    - cron: '0 */1 * * *' # ⏰ 每小时自动运行
+  workflow_dispatch: # 🖱️ 支持手动触发
+    inputs:
+      notify:
+        description: '是否发送 Telegram 通知'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  update_dns:
+    name: 🔄 更新 DNS 记录
+    runs-on: ubuntu-latest
+    
+    env:
+      FULL_DOMAIN: ${{ secrets.FULL_DOMAIN }}
+      HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
+      HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
+      HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_USER_ID: ${{ secrets.TG_USER_ID }}
+    
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 🐍 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 安装依赖包
+        run: |
+          echo "📌 正在安装 Python 依赖..."
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 \
+                      huaweicloudsdkcore huaweicloudsdkdns \
+                      requests-html lxml[html_clean]
+          echo "✅ 依赖安装完成"
+
+      - name: 🚀 执行 DNS 更新脚本
+        id: run_script
+        run: |
+          echo "🔍 开始获取 Cloudflare 优选 IP..."
+          python cloudflare_dns_updater.py
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: 📊 显示更新结果
+        if: success()
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ DNS 更新完成！"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          if [ -f cloudflare_bestip.json ]; then
+            echo "📄 生成的文件:"
+            ls -lh cloudflare_bestip.* | awk '{print "  - " $9 " (" $5 ")"}'
+          fi
+
+      - name: 💾 上传结果文件
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: cloudflare-ip-data-${{ github.run_number }}
+          path: |
+            cloudflare_bestip.json
+            cloudflare_bestip.txt
+          retention-days: 7
+
+      - name: 📝 提交更新到仓库
+        if: success()
+        run: |
+          echo "📝 准备提交更新..."
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          if [ -f cloudflare_bestip.json ] && [ -f cloudflare_bestip.txt ]; then
+            git add cloudflare_bestip.json cloudflare_bestip.txt
+            
+            if git diff --staged --quiet; then
+              echo "ℹ️ 没有检测到变化，跳过提交"
+            else
+              TIMESTAMP=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')
+              git commit -m "🔄 更新 Cloudflare 优选 IP | $TIMESTAMP [skip ci]"
+              
+              echo "🔄 拉取远程更新..."
+              git pull --rebase origin ${{ github.ref_name }} || true
+              
+              echo "📤 推送到远程仓库..."
+              git push origin ${{ github.ref_name }} && echo "✅ 推送成功" || echo "⚠️ 推送失败"
+            fi
+          else
+            echo "⚠️ 结果文件不存在，跳过提交"
+          fi
+
+      - name: 🧹 清理旧的 Artifacts
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const days = 7;
+            const timestamp = Date.now() - (days * 24 * 60 * 60 * 1000);
+            
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            
+            let deleted = 0;
+            for (const artifact of artifacts.data.artifacts) {
+              if (artifact.name.startsWith('cloudflare-ip-data-') && 
+                  new Date(artifact.created_at).getTime() < timestamp) {
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id
+                });
+                deleted++;
+              }
+            }
+            console.log(`🗑️ 已清理 ${deleted} 个过期的 Artifacts`);
+
+      - name: ❌ 处理失败情况
+        if: failure()
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "❌ DNS 更新失败！"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔍 请查看上方日志获取详细错误信息"
+          exit 1
+
+      - name: 📊 生成运行摘要
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🌐 Cloudflare IP 优选更新报告
+          
+          ### 📋 基本信息
+          - **域名**: `${{ secrets.FULL_DOMAIN }}`
+          - **运行时间**: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S') (UTC+8)
+          - **运行状态**: ${{ job.status == 'success' && '✅ 成功' || '❌ 失败' }}
+          - **触发方式**: ${{ github.event_name == 'schedule' && '⏰ 定时任务' || '🖱️ 手动触发' }}
+          
+          ### 📊 更新统计
+          EOF
+          
+          if [ -f cloudflare_bestip.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            python3 << 'PYTHON'
+          import json
+          with open('cloudflare_bestip.json', 'r', encoding='utf-8') as f:
+              data = json.load(f)
+              best = data.get('最优IP', {})
+              for line, ips in best.items():
+                  if ips:
+                      print(f"{line}: {len(ips)} 个 IP")
+          PYTHON
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo '⚠️ 未生成结果文件' >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '### 📦 生成的文件' >> $GITHUB_STEP_SUMMARY
+          echo '- `cloudflare_bestip.json` - 完整 JSON 数据' >> $GITHUB_STEP_SUMMARY
+          echo '- `cloudflare_bestip.txt` - 纯文本格式（可用于客户端）' >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          echo '---' >> $GITHUB_STEP_SUMMARY
+          echo '*由 GitHub Actions 自动生成*' >> $GITHUB_STEP_SUMMARY
