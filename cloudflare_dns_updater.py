@@ -149,13 +149,36 @@ class HuaWeiApi:
 
 
 def fetch_cloudflare_ips():
-    """使用 requests-html 渲染页面获取最新 Cloudflare IP"""
+    """使用 Playwright 渲染页面获取最新 Cloudflare IP"""
+    from playwright.sync_api import sync_playwright
+    
     url = "https://api.uouin.com/cloudflare.html"
-    session = HTMLSession()
-    r = session.get(url, timeout=20)
-    r.html.render(sleep=6, timeout=20)
-
-    soup = BeautifulSoup(r.html.html, "html.parser")
+    print(f"🌐 访问: {url}")
+    
+    with sync_playwright() as p:
+        print("🚀 启动浏览器...")
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+            ]
+        )
+        page = browser.new_page()
+        
+        print("📥 加载页面...")
+        page.goto(url, wait_until='networkidle', timeout=30000)
+        
+        print("⏱️  等待渲染...")
+        page.wait_for_timeout(6000)  # 等待 6 秒让数据加载
+        
+        html_content = page.content()
+        browser.close()
+        print("✅ 页面加载完成")
+    
+    soup = BeautifulSoup(html_content, "html.parser")
     table = soup.find("table", {"class": "table-striped"})
     best = {"默认": [], "电信": [], "联通": [], "移动": [], "IPv6": []}
     full = {}
@@ -189,6 +212,8 @@ def fetch_cloudflare_ips():
     # 去重 + 限制数量
     for k in best:
         best[k] = list(dict.fromkeys(best[k]))[:MAX_IP_PER_LINE]
+    
+    print(f"📊 获取到 IP 数量: 默认={len(best['默认'])}, 电信={len(best['电信'])}, 联通={len(best['联通'])}, 移动={len(best['移动'])}, IPv6={len(best['IPv6'])}")
 
     return full, best
 
