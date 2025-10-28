@@ -60,34 +60,19 @@ jobs:
       - name: 📊 生成运行报告
         if: always()
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          # 🌐 Cloudflare IP 优选更新报告
+          echo "## 🌐 Cloudflare IP 优选更新报告" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          ## 📋 基本信息
-          
-          | 项目 | 内容 |
-          |------|------|
-          | 🌍 域名 | `${{ secrets.FULL_DOMAIN }}` |
-          | ⏰ 运行时间 | `EOF`
-          echo "$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')` (北京时间) |" >> $GITHUB_STEP_SUMMARY
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          | 📌 运行状态 | EOF`
           if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ 成功 |" >> $GITHUB_STEP_SUMMARY
+            echo "### ✅ DNS 更新成功" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ 失败 |" >> $GITHUB_STEP_SUMMARY
-          fi
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          | 🎯 触发方式 | EOF`
-          if [ "${{ github.event_name }}" == "schedule" ]; then
-            echo "⏰ 定时任务 |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "🖱️ 手动触发 |" >> $GITHUB_STEP_SUMMARY
+            echo "### ❌ DNS 更新失败" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 📊 IP 更新统计" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 基本信息" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🕐 **时间:** $(TZ='Asia/Shanghai' date '+%Y/%m/%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
           
           if [ -f cloudflare_bestip.json ]; then
             python3 << 'PYTHON' >> $GITHUB_STEP_SUMMARY
@@ -97,56 +82,32 @@ jobs:
                   data = json.load(f)
                   best = data.get('最优IP', {})
                   
-                  print('| 线路类型 | IP 数量 | 状态 |')
-                  print('|----------|---------|------|')
-                  
-                  line_emoji = {
-                      '默认': '🌐',
-                      '电信': '📡',
-                      '联通': '📶',
-                      '移动': '📱',
-                      'IPv6': '🔷'
-                  }
-                  
-                  total_count = 0
-                  for line in ['默认', '电信', '联通', '移动', 'IPv6']:
+                  # IPv4 线路
+                  for line in ['默认', '电信', '联通', '移动']:
                       ips = best.get(line, [])
-                      count = len(ips)
-                      total_count += count
-                      emoji = line_emoji.get(line, '📍')
-                      status = '✅ 已更新' if count > 0 else '⚪ 无数据'
-                      print(f'| {emoji} {line} | {count} | {status} |')
+                      if ips:
+                          print(f'✅ **{line} A记录:** {len(ips)} 个IP')
                   
-                  print(f'| **🎯 总计** | **{total_count}** | - |')
+                  # IPv6
+                  ipv6 = best.get('IPv6', [])
+                  if ipv6:
+                      print(f'✅ **IPv6 AAAA记录:** {len(ipv6)} 个IP')
           except Exception as e:
               print(f'❌ 解析失败: {e}')
           PYTHON
-          else
-            echo "❌ **未生成结果文件**" >> $GITHUB_STEP_SUMMARY
           fi
           
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
           
-          ## 📦 生成的文件
+          ### 📦 生成的文件
           
           | 文件名 | 说明 | 用途 |
           |--------|------|------|
           | 📄 `cloudflare_bestip.json` | JSON 格式数据 | 程序调用 |
           | 📄 `cloudflare_bestip.txt` | 纯文本格式 | 客户端导入 |
           
-          ## 🔗 快速链接
+          ### 🔗 快速链接
           
           - 📥 [下载 Artifacts](../../actions/runs/${{ github.run_id }})
           - 📂 [查看仓库文件](../../tree/${{ github.ref_name }})
-          - 🔄 [重新运行工作流](../../actions/workflows/${{ github.workflow }})
-          
-          ---
-          
-          <div align="center">
-          
-          **🤖 由 GitHub Actions 自动生成** • [查看日志](../../actions/runs/${{ github.run_id }})
-          
-          </div>
           EOF
-          
-          echo "✅ 运行报告已生成"
