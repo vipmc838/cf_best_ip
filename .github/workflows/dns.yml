@@ -58,16 +58,10 @@ jobs:
 
       - name: 📝 更新 README.md 报告
         run: |
-          # 生成报告内容
-          REPORT=$(cat << 'EOF'
-          ### ✅ DNS 更新成功
+          # 获取当前时间
+          CURRENT_TIME=$(TZ='Asia/Shanghai' date '+%Y/%m/%d %H:%M:%S')
           
-          🕐 **更新时间:** $(TZ='Asia/Shanghai' date '+%Y/%m/%d %H:%M:%S')
-          
-          EOF
-          )
-          
-          # 添加 IP 统计
+          # 生成 IP 统计
           if [ -f cloudflare_bestip.json ]; then
             IP_STATS=$(python3 << 'PYTHON'
           import json
@@ -91,18 +85,33 @@ jobs:
               print(f'❌ 解析失败: {e}')
           PYTHON
           )
-            REPORT="${REPORT}${IP_STATS}"
+          else
+            IP_STATS="❌ 未生成数据文件"
           fi
           
+          # 生成完整报告
+          cat > report.tmp << EOF
+          ### ✅ DNS 更新成功
+          
+          🕐 **更新时间:** ${CURRENT_TIME}
+          
+          ${IP_STATS}
+          EOF
+          
           # 替换 README.md 中的报告部分
-          awk -v report="$REPORT" '
+          awk '
           BEGIN { p=1 }
-          /<!-- REPORT_START -->/ { print; print report; p=0 }
+          /<!-- REPORT_START -->/ { 
+              print
+              system("cat report.tmp")
+              p=0
+          }
           /<!-- REPORT_END -->/ { p=1 }
           p
           ' README.md > README.md.tmp
           
           mv README.md.tmp README.md
+          rm -f report.tmp
 
       - name: 📝 提交更新到仓库
         run: |
