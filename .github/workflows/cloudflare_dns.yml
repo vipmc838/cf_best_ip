@@ -17,6 +17,8 @@ jobs:
       HUAWEI_ACCESS_KEY: ${{ secrets.HUAWEI_ACCESS_KEY }}
       HUAWEI_SECRET_KEY: ${{ secrets.HUAWEI_SECRET_KEY }}
       HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_USER_ID: ${{ secrets.TG_USER_ID }}
     steps:
       - uses: actions/checkout@v4
 
