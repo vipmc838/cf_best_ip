@@ -88,52 +88,27 @@ jobs:
       - name: 📚 安装 Python 依赖
         run: |
           python -m pip install --upgrade pip -q
+          pip install -r requirements.txt -q
           
-          if [ -f requirements.txt ]; then
-            echo "📦 从 requirements.txt 安装..."
-            pip install -r requirements.txt -q
-          else
-            echo "📦 直接安装依赖..."
-            pip install -q \
-              requests \
-              beautifulsoup4 \
-              requests-html \
-              lxml \
-              huaweicloudsdkcore \
-              huaweicloudsdkdns
-          fi
+          echo "📦 安装 Playwright 浏览器..."
+          python -m playwright install chromium --with-deps
           
           echo "✅ 依赖安装完成"
-          pip list | grep -E "requests|beautifulsoup4|lxml|huawei"
-
-      - name: ✅ 检查环境变量
-        run: |
-          [ -z "$FULL_DOMAIN" ] && echo "❌ FULL_DOMAIN 未设置" && exit 1
-          [ -z "$HUAWEI_ACCESS_KEY" ] && echo "❌ HUAWEI_ACCESS_KEY 未设置" && exit 1
-          [ -z "$HUAWEI_SECRET_KEY" ] && echo "❌ HUAWEI_SECRET_KEY 未设置" && exit 1
-          echo "✅ 必需环境变量已配置"
 
       - name: 🚀 运行 DNS 更新脚本
         id: update_dns
         env:
           HIDE_DOMAIN: "true"
-          PYPPETEER_LOG_LEVEL: ERROR  # 减少 pyppeteer 日志
         run: |
           echo "🚀 开始执行 DNS 更新..."
-          echo "📋 配置信息："
-          echo "  - Python: $(python --version)"
-          echo "  - 浏览器: $PYPPETEER_EXECUTABLE_PATH"
-          echo "  - 区域: ${HUAWEI_REGION:-ap-southeast-1}"
-          echo ""
           
-          # 运行脚本（不过滤域名，用于调试）
           if python cloudflare_dns_updater.py; then
             echo "update_status=success" >> $GITHUB_OUTPUT
             echo "✅ 脚本执行成功"
           else
             EXIT_CODE=$?
             echo "update_status=failed" >> $GITHUB_OUTPUT
-            echo "❌ 脚本执行失败 (退出码: $EXIT_CODE)"
+            echo "❌ 脚本执行失败"
             exit $EXIT_CODE
           fi
 
