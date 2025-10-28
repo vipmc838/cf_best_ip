@@ -1,8 +1,8 @@
 name: Cloudflare IP + 华为云 DNS
 
 on:
-  schedule:
-    - cron: '0 */1 * * *' # 每小时
+#  schedule:
+#    - cron: '0 */1 * * *' # 每小时
   workflow_dispatch:
 
 permissions:
