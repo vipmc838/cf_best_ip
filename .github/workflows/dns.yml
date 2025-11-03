@@ -1,5 +1,4 @@
-name: 🌐 Cloudflare IP 优选 + 华为云 DNS 更新
-
+name: 🌐 Cloudflare IP 优选
 on:
   schedule:
     - cron: '0 */1 * * *' # ⏰ 每小时自动运行
