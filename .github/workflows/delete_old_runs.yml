@@ -2,8 +2,8 @@ name: 🧹 批量清理 GitHub Actions 历史运行
 
 on:
   workflow_dispatch: # 手动触发
-  schedule:
-    - cron: "0 2 * * *"  # 每天凌晨2点自动清理
+ # schedule:
+   # - cron: "0 2 * * *"  # 每天凌晨2点自动清理
 
 permissions:
   actions: write
