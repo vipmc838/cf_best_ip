@@ -1,0 +1,49 @@
+name: 🧹 批量清理 GitHub Actions 历史运行
+
+on:
+  workflow_dispatch: # 手动触发
+  schedule:
+    - cron: "0 2 * * *"  # 每天凌晨2点自动清理
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔑 设置 GITHUB_TOKEN
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "Using GITHUB_TOKEN"
+
+      - name: 🧹 删除旧的 Workflow Runs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const runs = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+
+            let deleted = 0;
+            for (const run of runs.data.workflow_runs) {
+              if (['completed', 'failure', 'cancelled'].includes(run.status)) {
+                try {
+                  await github.rest.actions.deleteWorkflowRun({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: run.id
+                  });
+                  console.log(`✅ Deleted run ${run.id} (${run.name})`);
+                  deleted++;
+                } catch (err) {
+                  console.log(`❌ Failed to delete run ${run.id}: ${err.message}`);
+                }
+              }
+            }
+
+            console.log(`\n🧾 总计删除 ${deleted} 个运行记录`);
