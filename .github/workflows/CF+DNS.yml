@@ -174,19 +174,14 @@ jobs:
           - 📂 [查看仓库文件](../../tree/${{ github.ref_name }})
           EOF
 
-      # ✨ 使用 GitHub CLI 清理旧的工作流运行记录
       - name: 🧹 清理旧的工作流运行
-        if: success()  # 只在成功时清理
-        continue-on-error: true  # 即使清理失败也不影响整体
+        if: success()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "🔍 开始清理旧运行记录..."
-          echo "📦 仓库: ${{ github.repository }}"
-          echo "🏷️  工作流: ${{ github.workflow }}"
-          echo ""
           
-          # 获取当前工作流的 ID
           WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows \
             --jq '.workflows[] | select(.name=="${{ github.workflow }}") | .id')
           
@@ -195,10 +190,6 @@ jobs:
             exit 0
           fi
           
-          echo "📋 工作流 ID: $WORKFLOW_ID"
-          echo ""
-          
-          # 获取所有运行记录的总数
           TOTAL_RUNS=$(gh api "repos/${{ github.repository }}/actions/workflows/${WORKFLOW_ID}/runs?per_page=1" \
             --jq '.total_count')
           
@@ -209,9 +200,6 @@ jobs:
             exit 0
           fi
           
-          # 获取需要删除的运行 ID（跳过最新的 4 条）
-          echo "🔎 获取需要删除的运行记录..."
-          
           RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" \
             --jq '.workflow_runs[4:] | .[].id')
           
@@ -220,12 +208,9 @@ jobs:
             exit 0
           fi
           
-          # 统计需要删除的数量
           DELETE_COUNT=$(echo "$RUN_IDS" | wc -l)
           echo "🗑️  准备删除 $DELETE_COUNT 条旧记录"
-          echo ""
           
-          # 删除旧运行记录
           SUCCESS_COUNT=0
           FAIL_COUNT=0
           
@@ -234,13 +219,12 @@ jobs:
             
             if gh api -X DELETE "repos/${{ github.repository }}/actions/runs/${run_id}" 2>/dev/null; then
               echo "✅"
-              ((SUCCESS_COUNT++))
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
             else
               echo "❌"
-              ((FAIL_COUNT++))
+              FAIL_COUNT=$((FAIL_COUNT + 1))
             fi
             
-            # 避免请求过快
             sleep 0.5
           done
           
@@ -248,6 +232,10 @@ jobs:
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ 清理完成！"
           echo "📊 成功删除: $SUCCESS_COUNT 条"
-          [ $FAIL_COUNT -gt 0 ] && echo "⚠️  删除失败: $FAIL_COUNT 条"
+          if [ $FAIL_COUNT -gt 0 ]; then
+            echo "⚠️  删除失败: $FAIL_COUNT 条"
+          fi
           echo "📦 保留最新: 4 条"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          exit 0
