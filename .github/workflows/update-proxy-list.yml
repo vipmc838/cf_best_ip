@@ -1,4 +1,4 @@
-name: 🔄 更新代理列表
+name: 更新代理列表
 
 on:
   schedule:
@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   update-proxies:
@@ -55,3 +56,13 @@ jobs:
           git commit -m "更新代理列表 $(date +'%Y-%m-%d %H:%M:%S')"
           git push
         fi
+
+    - name: 清理工作流记录
+      if: always()
+      uses: Mattraks/delete-workflow-runs@v2
+      with:
+        token: ${{ github.token }}
+        repository: ${{ github.repository }}
+        delete_workflow_pattern: ${{ github.workflow }}
+        retain_days: 0
+        keep_minimum_runs: 3
