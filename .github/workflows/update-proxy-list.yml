@@ -1,4 +1,4 @@
-name: 更新代理列表
+name: 🔄 更新代理列表
 
 on:
   schedule:
