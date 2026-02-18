@@ -32,6 +32,9 @@ jobs:
         pip install requests beautifulsoup4
         
     - name: 抓取代理列表
+      env:
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
       run: |
         echo "开始抓取代理列表..."
         python s5/generate_proxy_list.py
