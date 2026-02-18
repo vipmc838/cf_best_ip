@@ -14,22 +14,26 @@ class ProxyListScraper:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
         }
+        self.tg_bot_token = os.environ.get('TG_BOT_TOKEN', '')
+        self.tg_user_id = os.environ.get('TG_USER_ID', '')
     
     def clean_location(self, td_element):
         """清理并提取地理位置信息"""
         if not td_element:
-            return "未知"
+            return "未知", False
         
         span = td_element.find('span')
         if not span:
-            return "未知"
+            return "未知", False
         
         # 提取类型标签
         type_tag = ""
+        is_residential = False
         if span.find('span', class_='datacenter-tag'):
             type_tag = "[机房] "
         elif span.find('span', class_='residential-tag'):
             type_tag = "[家宽] "
+            is_residential = True
         
         # 移除不需要的元素
         for button in span.find_all('button'):
@@ -54,7 +58,7 @@ class ProxyListScraper:
         location = ' '.join(text_parts)
         location = re.sub(r'\s+', ' ', location).strip()
         
-        return f"{type_tag}{location}" if location else "未知"
+        return (f"{type_tag}{location}" if location else "未知"), is_residential
     
     def scrape_proxy_list(self):
         """抓取代理列表"""
@@ -69,9 +73,10 @@ class ProxyListScraper:
             table = soup.find('table')
             if not table:
                 print("未找到代理数据表格")
-                return []
+                return [], []
             
             proxies = []
+            residential_proxies = []
             rows = table.find_all('tr')[1:]
             
             for row in rows:
@@ -82,23 +87,86 @@ class ProxyListScraper:
                     ip = cells[1].text.strip()
                     port = cells[2].text.strip()
                     timestamp = cells[3].text.strip()
-                    location = self.clean_location(cells[4])
+                    location, is_residential = self.clean_location(cells[4])
                     
                     if protocol and ip and port:
                         proxy = f"{protocol}://{ip}:{port} [{timestamp}] {location}"
                         proxies.append(proxy)
+                        
+                        # 收集家宽代理
+                        if is_residential:
+                            residential_proxies.append({
+                                'protocol': protocol,
+                                'ip': ip,
+                                'port': port,
+                                'timestamp': timestamp,
+                                'location': location
+                            })
             
-            print(f"成功抓取到 {len(proxies)} 个代理")
-            return proxies
+            print(f"成功抓取到 {len(proxies)} 个代理，其中家宽 {len(residential_proxies)} 个")
+            return proxies, residential_proxies
             
         except requests.RequestException as e:
             print(f"网络请求错误: {e}")
-            return []
+            return [], []
         except Exception as e:
             print(f"抓取错误: {e}")
             import traceback
             traceback.print_exc()
-            return []
+            return [], []
+    
+    def send_telegram_notification(self, residential_proxies):
+        """发送Telegram通知"""
+        if not self.tg_bot_token or not self.tg_user_id:
+            print("未配置TG_BOT_TOKEN或TG_USER_ID，跳过Telegram通知")
+            return False
+        
+        if not residential_proxies:
+            print("没有家宽代理，跳过Telegram通知")
+            return True
+        
+        try:
+            # 构建消息
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            message = f"🏠 <b>家宽代理更新</b>\n"
+            message += f"📅 更新时间: {current_time}\n"
+            message += f"📊 家宽数量: {len(residential_proxies)} 个\n"
+            message += f"{'─' * 25}\n\n"
+            
+            for i, proxy in enumerate(residential_proxies, 1):
+                proxy_url = f"{proxy['protocol']}://{proxy['ip']}:{proxy['port']}"
+                message += f"<b>{i}.</b> <code>{proxy_url}</code>\n"
+                message += f"   ⏱ {proxy['timestamp']}\n"
+                message += f"   📍 {proxy['location'].replace('[家宽] ', '')}\n\n"
+            
+            # 发送消息
+            url = f"https://api.telegram.org/bot{self.tg_bot_token}/sendMessage"
+            payload = {
+                'chat_id': self.tg_user_id,
+                'text': message,
+                'parse_mode': 'HTML',
+                'disable_web_page_preview': True
+            }
+            
+            response = requests.post(url, json=payload, timeout=30)
+            response.raise_for_status()
+            
+            result = response.json()
+            if result.get('ok'):
+                print(f"Telegram通知发送成功，共 {len(residential_proxies)} 个家宽代理")
+                return True
+            else:
+                print(f"Telegram通知发送失败: {result}")
+                return False
+                
+        except requests.RequestException as e:
+            print(f"Telegram通知发送错误: {e}")
+            return False
+        except Exception as e:
+            print(f"Telegram通知错误: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def save_to_file(self, proxies, filename='proxy.txt'):
         """保存代理列表到文件"""
@@ -124,10 +192,12 @@ class ProxyListScraper:
 def main():
     """主函数"""
     scraper = ProxyListScraper()
-    proxies = scraper.scrape_proxy_list()
+    proxies, residential_proxies = scraper.scrape_proxy_list()
     
     if proxies:
         scraper.save_to_file(proxies)
+        # 发送家宽代理到Telegram
+        scraper.send_telegram_notification(residential_proxies)
         print("代理列表抓取完成！")
     else:
         print("未能获取到代理数据")
