@@ -4,7 +4,7 @@
 import requests
 from bs4 import BeautifulSoup
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import re
 import os
 
@@ -16,6 +16,12 @@ class ProxyListScraper:
         }
         self.tg_bot_token = os.environ.get('TG_BOT_TOKEN', '')
         self.tg_user_id = os.environ.get('TG_USER_ID', '')
+        # 中国时区 UTC+8
+        self.cn_tz = timezone(timedelta(hours=8))
+    
+    def get_cn_time(self):
+        """获取中国时间"""
+        return datetime.now(self.cn_tz)
     
     def clean_location(self, td_element):
         """清理并提取地理位置信息"""
@@ -126,18 +132,17 @@ class ProxyListScraper:
             return True
         
         try:
-            # 构建消息
-            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            message = f"🏠 <b>家宽代理更新</b>\n"
-            message += f"📅 更新时间: {current_time}\n"
-            message += f"📊 家宽数量: {len(residential_proxies)} 个\n"
-            message += f"{'─' * 25}\n\n"
+            # 构建紧凑消息（使用中国时间）
+            current_time = self.get_cn_time().strftime('%m-%d %H:%M')
+            message = f"🏠 <b>家宽代理</b> | {current_time} | 共{len(residential_proxies)}个\n"
             
-            for i, proxy in enumerate(residential_proxies, 1):
+            for proxy in residential_proxies:
                 proxy_url = f"{proxy['protocol']}://{proxy['ip']}:{proxy['port']}"
-                message += f"<b>{i}.</b> <code>{proxy_url}</code>\n"
-                message += f"   ⏱ {proxy['timestamp']}\n"
-                message += f"   📍 {proxy['location'].replace('[家宽] ', '')}\n\n"
+                # 位置信息去掉[家宽]标签
+                loc = proxy['location'].replace('[家宽] ', '')
+                
+                message += f"<code>{proxy_url}</code>\n"
+                message += f"└ {loc}\n"
             
             # 发送消息
             url = f"https://api.telegram.org/bot{self.tg_bot_token}/sendMessage"
@@ -176,7 +181,7 @@ class ProxyListScraper:
             filepath = os.path.join(script_dir, filename)
             
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(f"# 代理列表更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"# 代理列表更新时间: {self.get_cn_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"# 总计: {len(proxies)} 个代理\n\n")
                 
                 for proxy in proxies:
@@ -196,7 +201,6 @@ def main():
     
     if proxies:
         scraper.save_to_file(proxies)
-        # 发送家宽代理到Telegram
         scraper.send_telegram_notification(residential_proxies)
         print("代理列表抓取完成！")
     else:
