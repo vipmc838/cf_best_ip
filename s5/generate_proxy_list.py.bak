@@ -14,8 +14,8 @@ class ProxyListScraper:
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
         }
-        self.tg_bot_token = os.environ.get('TG_BOT_TOKEN', '')
-        self.tg_user_id = os.environ.get('TG_USER_ID', '')
+        self.tg_bot_token = os。environ.get('TG_BOT_TOKEN', '')
+        self.tg_user_id = os。environ.get('TG_USER_ID', '')
         # 中国时区 UTC+8
         self.cn_tz = timezone(timedelta(hours=8))
     
