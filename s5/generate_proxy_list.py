@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-代理列表抓取脚本
-从指定网站抓取代理列表并保存到文件
-"""
 
 import requests
 from bs4 import BeautifulSoup
@@ -22,7 +19,24 @@ class ProxyScraper:
         }
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
     
-    def fetch_proxies(self):
+    def clean_location(self, cell):
+        """清理位置信息并判断是否为家宽"""
+        location = cell.text.strip()
+        is_residential = False
+        
+        # 检查是否有家宽标签
+        residential_badge = cell.find('span', class_='badge')
+        if residential_badge and '家宽' in residential_badge.text:
+            is_residential = True
+            # 移除家宽标签文本
+            location = location.replace(residential_badge.text, '').strip()
+        
+        # 清理多余空白
+        location = ' '.join(location.split())
+        
+        return location, is_residential
+    
+    def scrape_proxy_list(self):
         """抓取代理列表"""
         try:
             print(f"正在抓取代理列表: {self.url}")
@@ -32,98 +46,50 @@ class ProxyScraper:
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 查找代理列表容器
-            proxy_list = soup.find('ul', class_='proxy-list')
-            if not proxy_list:
-                print("未找到代理列表容器，尝试其他方式...")
-                # 尝试查找div
-                proxy_list = soup.find('div', class_='proxy-list')
-            
-            if not proxy_list:
-                print("未找到代理列表")
-                return []
+            table = soup.find('table')
+            if not table:
+                print("未找到代理数据表格")
+                return [], []
             
             proxies = []
-            residential_count = 0
+            residential_proxies = []
+            rows = table.find_all('tr')[1:]
             
-            # 遍历所有代理项
-            for item in proxy_list.find_all('li', class_='proxy-item'):
-                proxy_data = self.parse_proxy_item(item)
-                if proxy_data:
-                    proxies.append(proxy_data)
-                    if proxy_data.get('is_residential'):
-                        residential_count += 1
+            for row in rows:
+                cells = row.find_all('td')
+                if len(cells) >= 5:
+                    protocol_badge = cells[0].find('span', class_='badge')
+                    protocol = protocol_badge.text.strip().lower() if protocol_badge else "socks5"
+                    ip = cells[1].text.strip()
+                    port = cells[2].text.strip()
+                    timestamp = cells[3].text.strip()
+                    location, is_residential = self.clean_location(cells[4])
+                    
+                    if protocol and ip and port:
+                        proxy = f"{protocol}://{ip}:{port} [{timestamp}] {location}"
+                        proxies.append(proxy)
+                        
+                        # 收集家宽代理
+                        if is_residential:
+                            residential_proxies.append({
+                                'protocol': protocol,
+                                'ip': ip,
+                                'port': port,
+                                'timestamp': timestamp,
+                                'location': location
+                            })
             
-            print(f"成功抓取到 {len(proxies)} 个代理，其中家宽 {residential_count} 个")
-            return proxies
+            print(f"成功抓取到 {len(proxies)} 个代理，其中家宽 {len(residential_proxies)} 个")
+            return proxies, residential_proxies
             
         except requests.RequestException as e:
-            print(f"请求错误: {e}")
-            return []
+            print(f"网络请求错误: {e}")
+            return [], []
         except Exception as e:
             print(f"抓取错误: {e}")
             import traceback
             traceback.print_exc()
-            return []
-    
-    def parse_proxy_item(self, item):
-        """解析单个代理项"""
-        try:
-            # 获取协议类型
-            protocol_tag = item.find('span', class_='protocol-tag')
-            protocol = protocol_tag.get_text(strip=True).lower() if protocol_tag else 'socks5'
-            
-            # 获取IP地址
-            ip_elem = item.find('span', class_='ip')
-            ip = ip_elem.get_text(strip=True) if ip_elem else None
-            
-            # 获取端口
-            port_elem = item.find('span', class_='port')
-            port = port_elem.get_text(strip=True).replace(':', '') if port_elem else None
-            
-            if not ip or not port:
-                return None
-            
-            # 获取更新时间
-            time_elem = item.find('span', class_='update-time')
-            update_time = time_elem.get_text(strip=True) if time_elem else ''
-            
-            # 获取位置信息
-            location_elem = item.find('div', class_='location')
-            location = location_elem.get_text(strip=True) if location_elem else ''
-            
-            # 获取ISP信息
-            isp_elem = item.find('div', class_='isp')
-            isp = isp_elem.get_text(strip=True) if isp_elem else ''
-            
-            # 检查是否为家宽
-            is_residential = False
-            residential_tag = item.find('span', class_='residential-tag')
-            if residential_tag:
-                is_residential = True
-            elif item.get('class') and 'residential' in ' '.join(item.get('class', [])):
-                is_residential = True
-            
-            # 获取类型标签
-            type_tag = item.find('span', class_='type-tag')
-            type_text = type_tag.get_text(strip=True) if type_tag else ''
-            if '家宽' in type_text or '住宅' in type_text:
-                is_residential = True
-            
-            return {
-                'protocol': protocol,
-                'ip': ip,
-                'port': port,
-                'update_time': update_time,
-                'location': location,
-                'isp': isp,
-                'is_residential': is_residential,
-                'type': type_text if type_text else ('家宽' if is_residential else '机房')
-            }
-            
-        except Exception as e:
-            print(f"解析代理项错误: {e}")
-            return None
+            return [], []
     
     def check_socks5_proxy(self, proxy, timeout=10):
         """检测SOCKS5代理是否可用"""
@@ -140,17 +106,13 @@ class ProxyScraper:
                 timeout=timeout
             )
             
-            if response.status_code == 200:
-                return True
-            return False
+            return response.status_code == 200
             
         except Exception:
             return False
     
-    def check_residential_proxies(self, proxies):
+    def check_residential_proxies(self, residential_proxies):
         """检测所有家宽代理的可用性"""
-        residential_proxies = [p for p in proxies if p.get('is_residential')]
-        
         if not residential_proxies:
             print("没有找到家宽代理")
             return []
@@ -160,15 +122,11 @@ class ProxyScraper:
         valid_proxies = []
         for proxy in residential_proxies:
             ip_port = f"{proxy['ip']}:{proxy['port']}"
-            try:
-                if self.check_socks5_proxy(proxy):
-                    print(f"✓ 代理可用: {ip_port}")
-                    valid_proxies.append(proxy)
-                else:
-                    print(f"✗ 代理不可用: {ip_port}")
-            except Exception as e:
-                error_msg = str(e)[:50]
-                print(f"✗ 代理不可用: {ip_port} - {error_msg}")
+            if self.check_socks5_proxy(proxy):
+                print(f"✓ 代理可用: {ip_port}")
+                valid_proxies.append(proxy)
+            else:
+                print(f"✗ 代理不可用: {ip_port}")
         
         print(f"\n检测完成: {len(valid_proxies)}/{len(residential_proxies)} 个代理可用")
         return valid_proxies
@@ -183,16 +141,7 @@ class ProxyScraper:
                 f.write(f"# 总计: {len(proxies)} 个代理\n\n")
                 
                 for proxy in proxies:
-                    line = f"{proxy['protocol']}://{proxy['ip']}:{proxy['port']}"
-                    if proxy.get('update_time'):
-                        line += f" [{proxy['update_time']}]"
-                    if proxy.get('type'):
-                        line += f" [{proxy['type']}]"
-                    if proxy.get('location'):
-                        line += f" {proxy['location']}"
-                    if proxy.get('isp'):
-                        line += f" [{proxy['isp']}]"
-                    f.write(line + '\n')
+                    f.write(proxy + '\n')
             
             print(f"代理列表已保存到 {filepath}")
             return True
@@ -216,8 +165,6 @@ class ProxyScraper:
             
         except Exception as e:
             print(f"保存SOCKS5文件错误: {e}")
-            import traceback
-            traceback.print_exc()
             return False
     
     def send_telegram_notification(self, valid_proxies):
@@ -248,7 +195,7 @@ class ProxyScraper:
             
             response = requests.post(url, data=data, timeout=10)
             if response.status_code == 200:
-                print(f"Telegram通知发送成功，共 {len(valid_proxies)} 个可用家宽代理")
+                print(f"Telegram通知发送成功")
                 return True
             else:
                 print(f"Telegram通知发送失败: {response.text}")
@@ -262,12 +209,20 @@ class ProxyScraper:
 def main():
     scraper = ProxyScraper()
     
-    proxies = scraper.fetch_proxies()
+    # 抓取代理列表
+    proxies, residential_proxies = scraper.scrape_proxy_list()
     
     if proxies:
+        # 保存完整代理列表
         scraper.save_proxies(proxies)
-        valid_residential = scraper.check_residential_proxies(proxies)
+        
+        # 检测家宽代理可用性
+        valid_residential = scraper.check_residential_proxies(residential_proxies)
+        
+        # 保存可用的家宽代理
         scraper.save_socks5_proxies(valid_residential)
+        
+        # 发送Telegram通知
         scraper.send_telegram_notification(valid_residential)
     else:
         print("未能抓取到代理列表")
