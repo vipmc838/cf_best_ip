@@ -209,19 +209,14 @@ class ProxyListScraper:
         return alive_proxies
 
     def save_alive_socks5(self, alive_proxies):
-        """
-        将可用的家宽代理保存到 s5/socks5.txt
-        格式: socks5://IP:PORT
-        """
         if not alive_proxies:
             print("没有可用的家宽代理，跳过保存 s5/socks5.txt")
             return False
 
         try:
+            # 脚本本身就在 s5/ 目录下，直接保存到同目录即可
             script_dir = os.path.dirname(os.path.abspath(__file__))
-            s5_dir = os.path.join(script_dir, 's5')
-            os.makedirs(s5_dir, exist_ok=True)
-            filepath = os.path.join(s5_dir, 'socks5.txt')
+            filepath = os.path.join(script_dir, 'socks5.txt')
 
             with open(filepath, 'w', encoding='utf-8') as f:
                 for proxy in alive_proxies:
@@ -229,6 +224,12 @@ class ProxyListScraper:
 
             print(f"可用家宽代理已保存到 {filepath}，共 {len(alive_proxies)} 个")
             return True
+
+        except Exception as e:
+            print(f"保存 socks5.txt 错误: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
         except Exception as e:
             print(f"保存 s5/socks5.txt 错误: {e}")
