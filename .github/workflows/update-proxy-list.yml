@@ -57,14 +57,18 @@ jobs:
           echo "文件内容："
           cat s5/socks5.txt
         else
-          echo "s5/socks5.txt 文件未生成"
+          echo "s5/socks5.txt 文件未生成（没有可用的家宽代理）"
         fi
         
     - name: 提交更新
       run: |
         git config --global user.email "action@github.com"
         git config --global user.name "GitHub Action"
-        git add s5/proxy.txt s5/socks5.txt
+        git add s5/proxy.txt
+        # socks5.txt 可能不存在（无可用家宽代理时不生成），只在存在时 add
+        if [ -f s5/socks5.txt ]; then
+          git add s5/socks5.txt
+        fi
         if git diff --staged --quiet; then
           echo "没有更改需要提交"
         else
@@ -80,4 +84,4 @@ jobs:
         repository: ${{ github.repository }}
         delete_workflow_pattern: ${{ github.workflow }}
         retain_days: 0
-        keep_minimum_runs: 3
+        keep_minimum_runs: 1
