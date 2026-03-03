@@ -20,7 +20,6 @@ class ProxyScraper:
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
             'Connection': 'keep-alive',
         }
-        # 获取脚本所在目录
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
     
     def fetch_proxies(self):
@@ -35,6 +34,11 @@ class ProxyScraper:
             
             # 查找代理列表容器
             proxy_list = soup.find('ul', class_='proxy-list')
+            if not proxy_list:
+                print("未找到代理列表容器，尝试其他方式...")
+                # 尝试查找div
+                proxy_list = soup.find('div', class_='proxy-list')
+            
             if not proxy_list:
                 print("未找到代理列表")
                 return []
@@ -130,7 +134,6 @@ class ProxyScraper:
                 'https': proxy_url
             }
             
-            # 使用httpbin测试代理
             response = requests.get(
                 'http://httpbin.org/ip',
                 proxies=proxies,
@@ -141,12 +144,11 @@ class ProxyScraper:
                 return True
             return False
             
-        except Exception as e:
+        except Exception:
             return False
     
     def check_residential_proxies(self, proxies):
         """检测所有家宽代理的可用性"""
-        # 筛选家宽代理
         residential_proxies = [p for p in proxies if p.get('is_residential')]
         
         if not residential_proxies:
@@ -260,24 +262,15 @@ class ProxyScraper:
 def main():
     scraper = ProxyScraper()
     
-    # 抓取代理列表
     proxies = scraper.fetch_proxies()
     
     if proxies:
-        # 保存完整代理列表
         scraper.save_proxies(proxies)
-        
-        # 检测家宽代理可用性
         valid_residential = scraper.check_residential_proxies(proxies)
-        
-        # 保存可用的家宽代理
         scraper.save_socks5_proxies(valid_residential)
-        
-        # 发送Telegram通知
         scraper.send_telegram_notification(valid_residential)
     else:
         print("未能抓取到代理列表")
-        # 创建空文件
         scraper.save_socks5_proxies([])
     
     print("代理列表抓取完成！")
