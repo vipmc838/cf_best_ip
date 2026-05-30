@@ -47,7 +47,7 @@ jobs:
         
     - name: 抓取并检测代理列表
       env:
-        TG_BOT_TOKEN: ${{ secrets.TELEGRAM_CHAT_TOKEN }}
+        TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TG_USER_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TOMCAT1235: ${{ secrets.TOMCAT1235 }}
       run: |
