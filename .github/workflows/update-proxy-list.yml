@@ -20,6 +20,20 @@ jobs:
       with:
         fetch-depth: 0
         ref: main
+
+    - name: 启用 WARP 网络
+      uses: fscarmen/warp-on-actions@v1.3
+      with:
+        stack: dual
+        mode: client
+
+    - name: 验证 WARP 网络
+      run: |
+        echo "=== 验证 WARP 网络状态 ==="
+        curl -s https://cloudflare.com/cdn-cgi/trace | grep -E "ip|warp" || true
+        echo "当前出口IP:"
+        curl -s https://api.ipify.org || true
+        echo ""
       
     - name: 设置Python环境
       uses: actions/setup-python@v5
@@ -35,6 +49,7 @@ jobs:
       env:
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_USER_ID: ${{ secrets.TG_USER_ID }}
+        TOMCAT1235: ${{ secrets.TOMCAT1235 }}
       run: |
         echo "开始抓取代理列表..."
         python s5/generate_proxy_list.py
@@ -44,7 +59,7 @@ jobs:
         if [ -f s5/proxy.txt ]; then
           echo "s5/proxy.txt 文件已生成"
           echo "文件内容预览："
-          head -10 s5/proxy.txt
+          head -15 s5/proxy.txt
         else
           echo "s5/proxy.txt 文件未生成"
         fi
