@@ -11,7 +11,7 @@ import concurrent.futures
 
 class ProxyListScraper:
     def __init__(self):
-        self.base_url = "https://tomcat1235.nyc.mn"
+        self.base_url = "https://proxy-socks5.com"
         self.login_url = f"{self.base_url}/login"
         self.proxy_list_url = f"{self.base_url}/proxy_list"
         self.headers = {
