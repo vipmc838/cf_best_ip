@@ -4,6 +4,7 @@ import os
 import json
 import sys
 import requests
+import html
 from datetime import datetime, timezone, timedelta
 from requests_html import HTMLSession
 from bs4 import BeautifulSoup
@@ -193,10 +194,22 @@ if __name__ == "__main__":
     sk = os.environ.get("HUAWEI_SECRET_KEY")
     region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
 
+    # 使用北京时间
+    china_tz = timezone(timedelta(hours=8))
+    now = datetime.now(china_tz).strftime("%Y/%m/%d %H:%M:%S")
+
     if not all([full_domain, ak, sk]):
-        error_msg = "环境变量 FULL_DOMAIN / HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY 必须设置"
-        print(error_msg)
-        send_telegram(f"🚨 <b>DNS 更新失败</b>\n\n❌ {error_msg}")
+        missing_envs = "环境变量 FULL_DOMAIN / HUAWEI_ACCESS_KEY / HUAWEI_SECRET_KEY 必须设置"
+        print(missing_envs)
+        domain_display = full_domain if full_domain else "未知"
+        fail_msg = (
+            "<b>🚨 DNS 更新失败</b>\n\n"
+            f"域名: {html.escape(domain_display)}\n"
+            f"错误: {html.escape(missing_envs)}\n"
+            "请检查日志并手动处理！\n\n"
+            f"时间: {now}"
+        )
+        send_telegram(fail_msg)
         sys.exit(1)
 
     try:
@@ -216,13 +229,13 @@ if __name__ == "__main__":
             ip_list = best_ips.get(line, [])
             if ip_list:
                 hw.set_records(full_domain, ip_list, record_type="A", line=line)
-                update_summary.append(f"✅ {line} A记录: {len(ip_list)} 个IP")
+                update_summary.append(f"{line} A记录: {len(ip_list)} 个IP")
 
         # 更新 IPv6
         ip_list_v6 = best_ips.get("IPv6", [])
         if ip_list_v6:
             hw.set_records(full_domain, ip_list_v6, record_type="AAAA", line="默认")
-            update_summary.append(f"✅ IPv6 AAAA记录: {len(ip_list_v6)} 个IP")
+            update_summary.append(f"IPv6 AAAA记录: {len(ip_list_v6)} 个IP")
 
         # 保存 JSON
         with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
@@ -230,8 +243,6 @@ if __name__ == "__main__":
         print("JSON 文件保存到 cloudflare_bestip.json")
 
         # 保存 TXT 文件（使用北京时间）
-        china_tz = timezone(timedelta(hours=8))
-        now = datetime.now(china_tz).strftime("%Y/%m/%d %H:%M:%S")
         txt_lines = []
 
         for line in ["默认", "电信", "联通", "移动", "IPv6"]:
@@ -251,14 +262,12 @@ if __name__ == "__main__":
 
         print("TXT 文件保存到 cloudflare_bestip.txt")
         
-        # 发送成功通知（可选）
-        success_msg = f"""✅ <b>DNS 更新成功</b>
-
-📋 域名: <code>{full_domain}</code>
-🕐 时间: {now}
-
-{chr(10).join(update_summary)}
-"""
+        # 发送成功通知
+        success_msg = "\n".join(
+            ["<b>✅ DNS 更新成功</b>", "", f"域名: {html.escape(full_domain)}"]
+            + update_summary
+            + ["", f"时间: {now}"]
+        )
         send_telegram(success_msg)
         print("✅ DNS 更新完成")
 
@@ -267,16 +276,14 @@ if __name__ == "__main__":
         print(f"❌ 错误: {error_msg}")
         
         # 发送失败通知
-        china_tz = timezone(timedelta(hours=8))
-        now = datetime.now(china_tz).strftime("%Y/%m/%d %H:%M:%S")
-        
-        fail_msg = f"""🚨 <b>DNS 更新失败</b>
-
-📋 域名: <code>{full_domain}</code>
-🕐 时间: {now}
-❌ 错误: <code>{error_msg}</code>
-
-请检查日志并手动处理！
-"""
+        fail_msg = "\n".join([
+            "<b>🚨 DNS 更新失败</b>",
+            "",
+            f"域名: {html.escape(full_domain)}",
+            f"错误: {html.escape(error_msg)}",
+            "请检查日志并手动处理！",
+            "",
+            f"时间: {now}"
+        ])
         send_telegram(fail_msg)
         sys.exit(1)
