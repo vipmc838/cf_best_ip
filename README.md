@@ -30,8 +30,33 @@
 | `HUAWEI_ACCESS_KEY` | 华为云账户 AK（Access Key），用于 API 认证 | `ABCD1234EFGH5678` |
 | `HUAWEI_SECRET_KEY` | 华为云账户 SK（Secret Key），用于 API 认证 | `abcd1234efgh5678ijkl9012mnop3456` |
 | `HUAWEI_REGION` | 华为云 DNS 服务所在区域 | `ap-southeast-1` 或 `cn-south-1` |
+| `API_URL` | 私有 API 地址，多个地址换行分隔 | `http://xxx.com/cf/api/results?token=123456` |
 | `TG_BOT_TOKEN` | Telegram Bot Token | `123456:ABC-DEF...` |
 | `TG_USER_ID` | Telegram User ID | `123456789` |
+
+- 私有 API JSON 格式
+```
+[
+  {
+    "IP 地址": "162.159.39.21",
+    "已发送": "5",
+    "已接收": "5",
+    "丢包率": "0.00",
+    "平均延迟": "44.85",
+    "下载速度(MB/s)": "13.98",
+    "地区码": "NRT"
+  },
+  {
+    "IP 地址": "172.64.144.132",
+    "已发送": "5",
+    "已接收": "5",
+    "丢包率": "0.00",
+    "平均延迟": "64.40",
+    "下载速度(MB/s)": "13.98",
+    "地区码": "SIN"
+  }
+]
+```
 
 ## 📥 下载文件
 
