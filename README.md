@@ -34,7 +34,7 @@
 | `TG_BOT_TOKEN` | Telegram Bot Token | `123456:ABC-DEF...` |
 | `TG_USER_ID` | Telegram User ID | `123456789` |
 
-- 私有 API JSON 格式
+- API返回JSON格式，字段是中文（IP地址、平均延迟、下载速度等）
 ```
 [
   {
