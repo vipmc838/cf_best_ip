@@ -1,8 +1,8 @@
 name: 🌐 Cloudflare IP 优选 + 华为云 DNS
 on:
   schedule:
-    - cron: '0 */1 * * *' # ⏰ 每小时自动运行
-  workflow_dispatch: # 🖱️ 支持手动触发
+    - cron: '0 */1 * * *' # 每小时自动运行
+  workflow_dispatch: # 支持手动触发
 
 permissions:
   contents: write
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   update_dns:
-    name: 🔄 更新 DNS 记录
+    name: 更新 DNS 记录
     runs-on: ubuntu-latest
     
     env:
@@ -20,17 +20,18 @@ jobs:
       HUAWEI_REGION: ${{ secrets.HUAWEI_REGION }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_USER_ID: ${{ secrets.TG_USER_ID }}
+      API_URL: ${{ secrets.API_URL }}
     
     steps:
-      - name: 📥 检出代码
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 🐍 设置 Python 环境
+      - name: 设置 Python 环境
         uses: actions/setup-python@v4
         with:
           python-version: 3.11
 
-      - name: 💾 缓存 pip 依赖
+      - name: 缓存 pip 依赖
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
@@ -38,15 +39,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: 📦 安装 Python 依赖
+      - name: 安装 Python 依赖
         run: |
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 huaweicloudsdkcore huaweicloudsdkdns requests-html lxml[html_clean]
 
-      - name: 🚀 运行脚本
+      - name: 运行脚本
         run: python cloudflare_dns_updater.py
 
-      - name: 💾 保存 JSON & TXT 文件
+      - name: 保存 JSON & TXT 文件
         uses: actions/upload-artifact@v4
         with:
           name: cloudflare-ip-data
@@ -55,7 +56,7 @@ jobs:
             cloudflare_bestip.txt
           retention-days: 7
 
-      - name: 📝 更新 README.md 报告
+      - name: 更新 README.md 报告
         run: |
           # 获取当前时间
           CURRENT_TIME=$(TZ='Asia/Shanghai' date '+%Y/%m/%d %H:%M:%S')
@@ -92,7 +93,7 @@ jobs:
           cat > report.tmp << EOF
           ### ✅ DNS 更新成功
           
-          🕐 **更新时间:** ${CURRENT_TIME}
+          更新时间: ${CURRENT_TIME}
           
           ${IP_STATS}
           EOF
@@ -112,19 +113,19 @@ jobs:
           mv README.md.tmp README.md
           rm -f report.tmp
 
-      - name: 📝 提交更新到仓库
+      - name: 提交更新到仓库
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add README.md cloudflare_bestip.json cloudflare_bestip.txt
-          git commit -m "🔄 更新 Cloudflare IP [skip ci]" || echo "No changes to commit"
+          git commit -m "更新 Cloudflare IP [skip ci]" || echo "No changes to commit"
           git pull --rebase origin HEAD || true
           git push origin HEAD || echo "Push 失败，可能没有变化"
 
-      - name: 📊 生成运行报告
+      - name: 生成运行报告
         if: always()
         run: |
-          echo "## 🌐 Cloudflare IP 优选更新报告" >> $GITHUB_STEP_SUMMARY
+          echo "## Cloudflare IP 优选更新报告" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ job.status }}" == "success" ]; then
@@ -134,9 +135,9 @@ jobs:
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📋 基本信息" >> $GITHUB_STEP_SUMMARY
+          echo "### 基本信息" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "🕐 **时间:** $(TZ='Asia/Shanghai' date '+%Y/%m/%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+          echo "时间: $(TZ='Asia/Shanghai' date '+%Y/%m/%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
           
           if [ -f cloudflare_bestip.json ]; then
             python3 << 'PYTHON' >> $GITHUB_STEP_SUMMARY
@@ -161,81 +162,25 @@ jobs:
           
           cat >> $GITHUB_STEP_SUMMARY << 'EOF'
           
-          ### 📦 生成的文件
+          ### 生成的文件
           
           | 文件名 | 说明 | 用途 |
           |--------|------|------|
-          | 📄 `cloudflare_bestip.json` | JSON 格式数据 | 程序调用 |
-          | 📄 `cloudflare_bestip.txt` | 纯文本格式 | 客户端导入 |
+          | cloudflare_bestip.json | JSON 格式数据 | 程序调用 |
+          | cloudflare_bestip.txt | 纯文本格式 | 客户端导入 |
           
-          ### 🔗 快速链接
+          ### 快速链接
           
-          - 📥 [下载 Artifacts](../../actions/runs/${{ github.run_id }})
-          - 📂 [查看仓库文件](../../tree/${{ github.ref_name }})
+          - 下载 Artifacts: ../../actions/runs/${{ github.run_id }}
+          - 查看仓库文件: ../../tree/${{ github.ref_name }}
           EOF
 
-      - name: 🧹 清理旧的工作流运行
-        if: success()
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "🔍 开始清理旧运行记录..."
-          
-          WORKFLOW_ID=$(gh api repos/${{ github.repository }}/actions/workflows \
-            --jq '.workflows[] | select(.name=="${{ github.workflow }}") | .id')
-          
-          if [ -z "$WORKFLOW_ID" ]; then
-            echo "❌ 未找到工作流 ID"
-            exit 0
-          fi
-          
-          TOTAL_RUNS=$(gh api "repos/${{ github.repository }}/actions/workflows/${WORKFLOW_ID}/runs?per_page=1" \
-            --jq '.total_count')
-          
-          echo "📊 总运行次数: $TOTAL_RUNS"
-          
-          if [ "$TOTAL_RUNS" -le 4 ]; then
-            echo "✅ 运行记录不超过 4 条，无需清理"
-            exit 0
-          fi
-          
-          RUN_IDS=$(gh api "repos/${{ github.repository }}/actions/workflows/${WORKFLOW_ID}/runs?per_page=100" \
-            --jq '.workflow_runs[4:] | .[].id')
-          
-          if [ -z "$RUN_IDS" ]; then
-            echo "✅ 没有需要清理的记录"
-            exit 0
-          fi
-          
-          DELETE_COUNT=$(echo "$RUN_IDS" | wc -l)
-          echo "🗑️  准备删除 $DELETE_COUNT 条旧记录"
-          
-          SUCCESS_COUNT=0
-          FAIL_COUNT=0
-          
-          for run_id in $RUN_IDS; do
-            echo -n "🗑️  删除运行 #$run_id ... "
-            
-            if gh api -X DELETE "repos/${{ github.repository }}/actions/runs/${run_id}" 2>/dev/null; then
-              echo "✅"
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            else
-              echo "❌"
-              FAIL_COUNT=$((FAIL_COUNT + 1))
-            fi
-            
-            sleep 0.5
-          done
-          
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ 清理完成！"
-          echo "📊 成功删除: $SUCCESS_COUNT 条"
-          if [ $FAIL_COUNT -gt 0 ]; then
-            echo "⚠️  删除失败: $FAIL_COUNT 条"
-          fi
-          echo "📦 保留最新: 4 条"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          
-          exit 0
+      - name: 清理历史
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 2
