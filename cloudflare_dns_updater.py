@@ -27,11 +27,11 @@ def send_telegram(message):
     """
     bot_token = os.environ.get("TG_BOT_TOKEN")
     user_id = os.environ.get("TG_USER_ID")
-    
+
     if not bot_token or not user_id:
         print("⚠️ TG_BOT_TOKEN 或 TG_USER_ID 未设置，跳过通知")
         return False
-    
+
     try:
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         data = {
@@ -53,8 +53,8 @@ def send_telegram(message):
 
 class HuaWeiApi:
     def __init__(self, ak, sk, region="ap-southeast-1"):
-        self.client = DnsClient.new_builder()\
-            .with_credentials(BasicCredentials(ak, sk))\
+        self.client = DnsClient.new_builder() \
+            .with_credentials(BasicCredentials(ak, sk)) \
             .with_region(DnsRegion.value_of(region)).build()
         self.zone_id = self._get_zones()
 
@@ -158,7 +158,7 @@ def fetch_cloudflare_ips():
         raise Exception("无法获取 Cloudflare IP 表格数据")
 
     for tr in table.find_all("tr")[1:]:
-        cols = [c.text.strip() for c in tr.find_all(["td","th"])]
+        cols = [c.text.strip() for c in tr.find_all(["td", "th"])]
         if len(cols) < 9:
             continue
         line = cols[1]
@@ -176,7 +176,7 @@ def fetch_cloudflare_ips():
             best["IPv6"].append(ip)
         else:
             # 多线 / 全网 / 默认 都算默认
-            if line not in ("电信","联通","移动"):
+            if line not in ("电信", "联通", "移动"):
                 best["默认"].append(ip)
             else:
                 best[line].append(ip)
@@ -197,16 +197,16 @@ def fetch_api_ips():
     if not api_urls_env:
         print("⚠️ 未设置 API_URL，跳过私有 API 获取")
         return []
-    
+
     api_urls = [url.strip() for url in api_urls_env.splitlines() if url.strip()]
     if not api_urls:
         print("⚠️ API_URL 为空，跳过")
         return []
-    
+
     all_ips = []
     for url in api_urls:
         try:
-            print(f"🌐 从 API 获取 IP: {url}")
+            print(f"从 API 获取 IP: {url}")
             resp = requests.get(url, timeout=15)
             resp.raise_for_status()
             data = resp.json()
@@ -223,7 +223,7 @@ def fetch_api_ips():
                 print(f"⚠️ API 返回不是列表: {type(data)}")
         except Exception as e:
             print(f"❌ 从 API 获取失败 {url}: {e}")
-    
+
     # 去重
     all_ips = list(dict.fromkeys(all_ips))
     print(f"✅ 从 API 获取到 {len(all_ips)} 个 IP")
@@ -256,37 +256,37 @@ if __name__ == "__main__":
 
     try:
         print(f"开始更新 DNS: {full_domain}")
-        
+
         # 初始化华为云 API
         hw = HuaWeiApi(ak, sk, region)
-        
+
         # 获取 Cloudflare IP（原有网页）
         full_data, best_ips = fetch_cloudflare_ips()
-        
+
         # 获取私有 API IP 并合并到默认线路
         api_ips = fetch_api_ips()
         if api_ips:
             # 分离 IPv4 和 IPv6
             api_ipv4 = [ip for ip in api_ips if ":" not in ip]
             api_ipv6 = [ip for ip in api_ips if ":" in ip]
-            
+
             # 合并 IPv4 到默认线路
             if api_ipv4:
                 print(f"➕ 合并 {len(api_ipv4)} 个 IPv4 到默认线路")
                 combined = best_ips.get("默认", []) + api_ipv4
                 best_ips["默认"] = list(dict.fromkeys(combined))[:MAX_IP_PER_LINE]
-            
+
             # 合并 IPv6 到 IPv6 线路（如果有）
             if api_ipv6:
                 print(f"➕ 合并 {len(api_ipv6)} 个 IPv6 到 IPv6 线路")
                 combined_v6 = best_ips.get("IPv6", []) + api_ipv6
                 best_ips["IPv6"] = list(dict.fromkeys(combined_v6))[:MAX_IP_PER_LINE]
-            
+
             # 将 API 数据也记录到 full_data 中，便于查看
             if "API" not in full_data:
                 full_data["API"] = []
             full_data["API"].extend([{"IP": ip} for ip in api_ips])
-        
+
         # 统计更新信息
         update_summary = []
 
@@ -309,13 +309,12 @@ if __name__ == "__main__":
         print("JSON 文件保存到 cloudflare_bestip.json")
 
         # 保存 TXT 文件（使用北京时间）
-        txt_lines = []
+        txt_lines = [now]  # 首行日期
 
         for line in ["默认", "电信", "联通", "移动", "IPv6"]:
             ip_list = best_ips.get(line, [])
             if not ip_list:
                 continue
-            txt_lines.append(now)
             for ip in ip_list:
                 if ":" in ip:  # IPv6
                     txt_lines.append(f"[{ip}]#{line}")
@@ -323,11 +322,15 @@ if __name__ == "__main__":
                     txt_lines.append(f"{ip}#{line}")
             txt_lines.append("")  # 每组之间空行
 
+        # 移除最后一个多余的空行（如果存在）
+        if txt_lines and txt_lines[-1] == "":
+            txt_lines.pop()
+
         with open("cloudflare_bestip.txt", "w", encoding="utf-8") as f:
             f.write("\n".join(txt_lines))
 
         print("TXT 文件保存到 cloudflare_bestip.txt")
-        
+
         # 发送成功通知
         success_msg = "\n".join(
             ["<b>✅ DNS 更新成功</b>", "", f"域名: {html.escape(full_domain)}"]
@@ -340,7 +343,7 @@ if __name__ == "__main__":
     except Exception as e:
         error_msg = str(e)
         print(f"❌ 错误: {error_msg}")
-        
+
         # 发送失败通知
         fail_msg = "\n".join([
             "<b>🚨 DNS 更新失败</b>",
