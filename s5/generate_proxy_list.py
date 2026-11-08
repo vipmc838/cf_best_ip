@@ -303,7 +303,7 @@ class ProxyListScraper:
             return [], []
 
     def check_proxy_availability(self, proxy_info, timeout=10):
-        """
+            """
         检测代理可用性
 
         协议映射:
@@ -328,12 +328,18 @@ class ProxyListScraper:
 
         try:
             response = requests.get(
-                'http://httpbin.org/ip',
+                'https://mra8-api.hf.space/',
                 proxies=proxies,
                 timeout=timeout,
-                headers={'User-Agent': 'Mozilla/5.0'}
+                headers={'User-Agent': 'Mozilla/5.0'},
             )
-            return response.status_code == 200
+            if response.status_code != 200:
+                return False
+
+            data = response.json()
+            # 只要返回了合法 ip 字段，就认为代理链路可用
+            return bool(data.get('ip'))
+
         except Exception:
             return False
 
