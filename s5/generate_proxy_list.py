@@ -9,6 +9,7 @@ import re
 import os
 import concurrent.futures
 
+
 class ProxyListScraper:
     def __init__(self):
         self.base_url = "https://proxy-socks5.com"
@@ -24,6 +25,9 @@ class ProxyListScraper:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
 
+        # 自建检测 API
+        self.probe_url = 'https://mra8-api.hf.space/'
+
     def get_cn_time(self):
         return datetime.now(self.cn_tz)
 
@@ -31,7 +35,6 @@ class ProxyListScraper:
         """
         登录网站，从环境变量 TOMCAT1235 读取凭据
         格式: 用户名-----密码
-        不打印用户名/密码，避免日志泄露
         """
         tomcat_cred = os.environ.get('TOMCAT1235', '')
         if not tomcat_cred:
@@ -94,7 +97,7 @@ class ProxyListScraper:
             fail_keywords = ['密码错误', '用户名或密码', 'invalid', 'incorrect', '登录失败', 'wrong password']
             for kw in fail_keywords:
                 if kw in resp_text:
-                    print(f"❌ 登录失败: 凭据错误")
+                    print("❌ 登录失败: 凭据错误")
                     return False
 
             soup_after = BeautifulSoup(response.text, 'html.parser')
@@ -161,8 +164,6 @@ class ProxyListScraper:
           8.217.6.165                                   ← 取这里
           <span ...>:1080</span>                        ← 跳过
         </td>
-
-        只取直接子文本节点（NavigableString），跳过所有标签
         """
         ip = ""
         for node in ip_cell.children:
@@ -173,24 +174,14 @@ class ProxyListScraper:
                     break
 
         if ip:
-            # 保险：清理残留协议前缀
             ip = re.sub(r'^(socks5h?|socks4a?|http|https)\s*', '', ip, flags=re.I).strip()
-            # 清理端口后缀
             ip = re.sub(r':\d+$', '', ip).strip()
 
         return ip
 
     def parse_proxy_table(self, html_content):
         """
-        解析代理列表 HTML
-
-        表格结构（4列）:
-        ┌──────────┬─────────────────┬──────┬─────────────────────────┐
-        │  类型    │      IP         │ 端口 │       地理信息           │
-        ├──────────┼─────────────────┼──────┼─────────────────────────┤
-        │ socks5   │ 8.217.6.165     │ 1080 │ [机房] 中国 香港        │
-        │ http     │ 103.18.X.11     │ 8080 │ [家宽] [原生IP] 印度   │ ← 掩码，跳过
-        └──────────┴─────────────────┴──────┴─────────────────────────┘
+        解析代理列表 HTML（4列: 类型 / IP / 端口 / 地理信息）
         """
         soup = BeautifulSoup(html_content, 'html.parser')
 
@@ -216,39 +207,39 @@ class ProxyListScraper:
                 continue
 
             try:
-                # ── 列0: 协议类型 ──────────────────────────────────────
+                # ── 列0: 协议类型 ──
                 protocol_badge = cells[0].find('span', class_='badge')
                 protocol = protocol_badge.get_text(strip=True).lower() if protocol_badge else "socks5"
 
-                # ── 列1: IP 地址（只取直接文本节点）──────────────────
+                # ── 列1: IP 地址 ──
                 ip = self.extract_ip_from_cell(cells[1])
 
-                # ── 列2: 端口 ─────────────────────────────────────────
+                # ── 列2: 端口 ──
                 port = cells[2].get_text(strip=True)
 
-                # ── 列3: 地理信息 + 时间戳 ───────────────────────────
+                # ── 列3: 地理信息 + 时间戳 ──
                 location, is_residential = self.clean_location(cells[3])
                 time_span = cells[3].find('span', class_='text-muted')
                 timestamp = time_span.get_text(strip=True) if time_span else ""
 
-                # ── 基础验证 ──────────────────────────────────────────
+                # ── 基础验证 ──
                 if not protocol or not ip or not port:
                     print(f"  ⚠️  第{i+1}行数据不完整: "
                           f"protocol={protocol!r}, ip={ip!r}, port={port!r}")
                     continue
 
-                # ── 掩码IP检测并跳过，不入库 ─────────────────────────
+                # ── 掩码IP检测并跳过 ──
                 is_masked = bool(re.search(r'\.[Xx](\.|$)', ip))
                 if is_masked:
                     skipped_mask += 1
                     continue
 
-                # ── IP 格式验证 ───────────────────────────────────────
+                # ── IP 格式验证 ──
                 if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
                     print(f"  ⚠️  第{i+1}行 IP 格式异常，跳过: {ip!r}")
                     continue
 
-                # ── 构造输出字符串 ────────────────────────────────────
+                # ── 构造输出字符串 ──
                 proxy_str = f"{protocol}://{ip}:{port}"
                 if timestamp:
                     proxy_str += f" [{timestamp}]"
@@ -303,13 +294,18 @@ class ProxyListScraper:
             return [], []
 
     def check_proxy_availability(self, proxy_info, timeout=10):
-            """
+        """
         检测代理可用性
 
         协议映射:
           socks5 / socks5h → socks5://ip:port
           socks4 / socks4a → socks4://ip:port
           http   / https   → http://ip:port
+
+        探测目标: 自建 API https://mra8-api.hf.space/
+        返回 JSON 形如:
+          {"ip": "159.54.178.95", "as": {...}, "country": {...}, "regions": [...]}
+        只要返回 200 且包含 ip 字段，即认为代理链路可用。
         """
         protocol = proxy_info['protocol']
         ip       = proxy_info['ip']
@@ -328,7 +324,7 @@ class ProxyListScraper:
 
         try:
             response = requests.get(
-                'https://mra8-api.hf.space/',
+                self.probe_url,
                 proxies=proxies,
                 timeout=timeout,
                 headers={'User-Agent': 'Mozilla/5.0'},
@@ -337,7 +333,6 @@ class ProxyListScraper:
                 return False
 
             data = response.json()
-            # 只要返回了合法 ip 字段，就认为代理链路可用
             return bool(data.get('ip'))
 
         except Exception:
@@ -349,9 +344,8 @@ class ProxyListScraper:
             print("没有代理需要检测")
             return []
 
-        # 入库时已过滤掩码IP，直接全量检测
         print(f"\n{'='*50}")
-        print(f"开始检测 {len(proxy_list)} 个代理的可用性...")
+        print(f"开始检测 {len(proxy_list)} 个代理的可用性（探测源: {self.probe_url}）...")
         print(f"{'='*50}")
 
         alive_proxies = []
@@ -378,10 +372,6 @@ class ProxyListScraper:
 
     def save_alive_proxies(self, alive_proxies, filename='alive.txt'):
         """保存可用代理到 alive.txt（每行 protocol://ip:port）"""
-        if not alive_proxies:
-            print("没有可用的代理，跳过保存")
-            return False
-
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             filepath   = os.path.join(script_dir, filename)
@@ -390,7 +380,10 @@ class ProxyListScraper:
                 for proxy in alive_proxies:
                     f.write(f"{proxy['protocol']}://{proxy['ip']}:{proxy['port']}\n")
 
-            print(f"✅ 可用代理已保存到 {filepath}，共 {len(alive_proxies)} 个")
+            if alive_proxies:
+                print(f"✅ 可用代理已保存到 {filepath}，共 {len(alive_proxies)} 个")
+            else:
+                print(f"⚠️  本次无可用代理，已写入空文件 {filepath}（避免旧数据残留）")
             return True
 
         except Exception as e:
@@ -473,6 +466,7 @@ def main():
     if all_proxies:
         scraper.save_to_file(proxies_str)
         alive_proxies = scraper.check_all_proxies(all_proxies)
+        # 无论是否有可用代理都写 alive.txt（空列表也写空文件，避免旧数据残留）
         scraper.save_alive_proxies(alive_proxies, filename='alive.txt')
         scraper.send_telegram_notification(alive_proxies)
         print("\n✅ 代理列表处理完成！")
