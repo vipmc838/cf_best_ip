@@ -21,6 +21,17 @@ jobs:
         fetch-depth: 0
         ref: main
 
+      
+    - name: 设置Python环境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+        
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 PySocks 'requests[socks]'
+        
     - name: 启用 WARP 网络
       uses: fscarmen/warp-on-actions@v1.3
       with:
@@ -34,17 +45,7 @@ jobs:
         echo "当前出口IP:"
         curl -s https://api.ipify.org || true
         echo ""
-      
-    - name: 设置Python环境
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.9'
-        
-    - name: 安装依赖
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 PySocks 'requests[socks]'
-        
+
     - name: 抓取并检测代理列表
       env:
         TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
