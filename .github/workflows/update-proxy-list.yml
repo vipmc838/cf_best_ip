@@ -21,7 +21,6 @@ jobs:
         fetch-depth: 0
         ref: main
 
-      
     - name: 设置Python环境
       uses: actions/setup-python@v5
       with:
@@ -52,9 +51,9 @@ jobs:
         TG_USER_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TOMCAT1235: ${{ secrets.TOMCAT1235 }}
       run: |
-        echo "开始抓取代理列表..."
+        echo "开始抓取并还原代理列表..."
         python s5/generate_proxy_list.py
-        echo "抓取完成，检查文件..."
+        echo "处理完成，检查文件..."
         
         echo "=== 检查 proxy.txt ==="
         if [ -f s5/proxy.txt ]; then
