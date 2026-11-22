@@ -59,139 +59,176 @@ class HuaWeiApi:
         self.zone_id = self._get_zones()
 
     def _get_zones(self):
-        try:
-            request = ListPublicZonesRequest()
-            response = self.client.list_public_zones(request)
-            if response.zones:
-                return response.zones[0].id
-            else:
-                raise Exception("未找到任何 Public Zone")
-        except Exception as e:
-            print(f"获取 Zone ID 失败: {e}")
-            raise e
+        req = ListPublicZonesRequest()
+        resp = self.client.list_public_zones(req)
+        return {z.name.rstrip('.'): z.id for z in resp.zones}
 
-    def get_records(self, full_domain, record_type="A", line="默认"):
-        record_name = f"{full_domain}."
-        try:
-            request = ListRecordSetsWithLineRequest()
-            request.zone_id = self.zone_id
-            response = self.client.list_record_sets_with_line(request)
-            for record in response.recordsets:
-                if record.name == record_name and record.type == record_type:
-                    current_line = record.line if record.line else "默认"
-                    if current_line == line:
-                        return record
-            return None
-        except Exception as e:
-            print(f"获取解析记录失败 ({line}): {e}")
-            return None
+    def list_records(self, domain, record_type="A", line="默认"):
+        zone_id = self.zone_id.get(domain.rstrip('.'))
+        if zone_id is None:
+            raise KeyError(f"Domain {domain} not in Huawei zone list")
+        req = ListRecordSetsWithLineRequest()
+        req.zone_id = zone_id
+        req.name = f"{domain}."
+        req.type = record_type
+        req.limit = 100
+        resp = self.client.list_record_sets_with_line(req)
+        line_map = {
+            "默认": "default_view",
+            "电信": "Dianxin",
+            "联通": "Liantong",
+            "移动": "Yidong"
+        }
+        sdk_line = line_map.get(line, "default_view")
+        return [r for r in resp.recordsets if getattr(r, "line", None) == sdk_line]
 
-    def set_records(self, full_domain, ip_list, record_type="A", line="默认"):
-        record = self.get_records(full_domain, record_type, line)
-        line_name = "默认" if line == "默认" else line
-        if record:
-            try:
-                request = UpdateRecordSetRequest()
-                request.zone_id = self.zone_id
-                request.recordset_id = record.id
-                request.body = UpdateRecordSetReq(records=ip_list, type=record_type, ttl=300)
-                self.client.update_record_set(request)
-                print(f"更新成功 [{line_name}] -> {ip_list}")
-            except Exception as e:
-                print(f"更新失败 [{line_name}]: {e}")
-                raise e
+    def set_records(self, domain, ips, record_type="A", line="默认", ttl=300):
+        if not ips:
+            print(f"{record_type} | {line} 无有效 IP，跳过更新")
+            return
+
+        # 过滤 IP 类型
+        if record_type == "A":
+            ips = [ip for ip in ips if "." in ip]
+        elif record_type == "AAAA":
+            ips = [ip for ip in ips if ":" in ip]
+
+        if not ips:
+            print(f"{record_type} | {line} 无匹配 IP，跳过")
+            return
+
+        # 去重
+        ips = list(dict.fromkeys(ips))[:MAX_IP_PER_LINE]
+
+        zone_id = self.zone_id.get(domain.rstrip('.'))
+        if zone_id is None:
+            raise Exception(f"Domain {domain} not found in zone")
+
+        existing = self.list_records(domain, record_type, line)
+
+        if existing:
+            for r in existing:
+                existing_vals = list(dict.fromkeys(getattr(r, "records", []) or []))
+                if sorted(existing_vals) != sorted(ips):
+                    req = UpdateRecordSetRequest()
+                    req.zone_id = zone_id
+                    req.recordset_id = r.id
+                    req.body = UpdateRecordSetReq(
+                        name=r.name,
+                        type=record_type,
+                        ttl=ttl,
+                        records=ips
+                    )
+                    self.client.update_record_set(req)
+                    print(f"更新 {line} {record_type} => {ips}")
+                else:
+                    print(f"{line} {record_type} 无变化，跳过")
         else:
-            try:
-                request = CreateRecordSetRequest()
-                request.zone_id = self.zone_id
-                body = {
-                    "name": f"{full_domain}.",
-                    "type": record_type,
-                    "ttl": 300,
-                    "records": ip_list,
-                }
-                if line != "默认":
-                    body["line"] = line
-                request.body = body
-                self.client.create_record_set(request)
-                print(f"添加成功 [{line_name}] -> {ip_list}")
-            except Exception as e:
-                print(f"添加失败 [{line_name}]: {e}")
-                raise e
+            req = CreateRecordSetRequest()
+            req.zone_id = zone_id
+            req.body = {
+                "name": f"{domain}.",
+                "type": record_type,
+                "ttl": ttl,
+                "records": ips,
+                "line": ("default_view" if line == "默认" else
+                         ("Dianxin" if line == "电信" else
+                          ("Liantong" if line == "联通" else
+                           ("Yidong" if line == "移动" else "default_view"))))
+            }
+            self.client.create_record_set(req)
+            print(f"创建 {line} {record_type} => {ips}")
 
 
 def fetch_cloudflare_ips():
     """
-    爬取 Cloudflare IP 列表
+    使用 requests-html 渲染页面获取最新 Cloudflare IP
     """
-    url = "https://stock.hostmonit.com/CloudFlareYes"
+    url = "https://api.uouin.com/cloudflare.html"
     session = HTMLSession()
-    try:
-        response = session.get(url, timeout=15)
-        response.html.render(timeout=20)
-    except Exception as e:
-        print(f"网页抓取/渲染失败: {e}")
-        return {}, {}
+    r = session.get(url, timeout=20)
+    r.html.render(sleep=6, timeout=20)
 
-    soup = BeautifulSoup(response.html.html, "html.parser")
-    tables = soup.find_all("table")
+    soup = BeautifulSoup(r.html.html, "html.parser")
+    table = soup.find("table", {"class": "table-striped"})
+    best = {"默认": [], "电信": [], "联通": [], "移动": [], "IPv6": []}
+    full = {}
 
-    all_data = {}
-    best_ips = {"电信": [], "联通": [], "移动": []}
+    if not table:
+        raise Exception("无法获取 Cloudflare IP 表格数据")
 
-    for table in tables:
-        prev = table.find_previous(["h2", "h3"])
-        title = prev.text.strip() if prev else "未知类型"
-        headers = [th.text.strip() for th in table.find_all("th")]
+    for tr in table.find_all("tr")[1:]:
+        cols = [c.text.strip() for c in tr.find_all(["td", "th"])]
+        if len(cols) < 9:
+            continue
+        line = cols[1]
+        ip = cols[2]
+        packet = cols[3]
+        if packet != "0.00%":
+            continue
 
-        rows_data = []
-        for tr in table.find_all("tr")[1:]:
-            cells = [td.text.strip() for td in tr.find_all("td")]
-            if len(cells) == len(headers):
-                row_dict = dict(zip(headers, cells))
-                rows_data.append(row_dict)
+        if line not in full:
+            full[line] = []
+        full[line].append({"IP": ip, "带宽": cols[6], "时间": cols[8]})
 
-                ip = row_dict.get("IP地址")
-                line = row_dict.get("线路")
-                if ip and line in best_ips and len(best_ips[line]) < MAX_IP_PER_LINE:
-                    best_ips[line].append(ip)
+        # 分类 IP
+        if ":" in ip:
+            best["IPv6"].append(ip)
+        else:
+            # 多线 / 全网 / 默认 都算默认
+            if line not in ("电信", "联通", "移动"):
+                best["默认"].append(ip)
+            else:
+                best[line].append(ip)
 
-        all_data[title] = rows_data
+    # 去重 + 限制数量
+    for k in best:
+        best[k] = list(dict.fromkeys(best[k]))[:MAX_IP_PER_LINE]
 
-    # 构建默认线路（电信+联通+移动混合）
-    default_ips = []
-    max_len = max(len(v) for v in best_ips.values()) if best_ips else 0
-    for i in range(max_len):
-        for line in ["电信", "联通", "移动"]:
-            if i < len(best_ips[line]):
-                default_ips.append(best_ips[line][i])
-    best_ips["默认"] = list(dict.fromkeys(default_ips))[:MAX_IP_PER_LINE]
-
-    return all_data, best_ips
+    return full, best
 
 
 def fetch_api_ips():
     """
-    从私有 API 获取 Cloudflare IP
+    从私有 API 获取 IP 列表，支持多个 URL（换行分隔）
+    API 返回 JSON 数组，每个对象包含 "IP 地址" 字段
     """
-    api_url = "https://api.uouin.com/cloudflare.html"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-    }
-    try:
-        response = requests.get(api_url, headers=headers, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        if data.get("info") == "SUCCESS" and "data" in data:
-            ips = [item["ip"] for item in data["data"] if "ip" in item]
-            print(f"成功从 API 获取到 {len(ips)} 个 IP")
-            return ips
-        else:
-            print("API 返回格式异常或无数据")
-            return []
-    except Exception as e:
-        print(f"请求 API 失败: {e}")
+    api_urls_env = os.environ.get("API_URL", "")
+    if not api_urls_env:
+        print("⚠️ 未设置 API_URL，跳过私有 API 获取")
         return []
+
+    api_urls = [url.strip() for url in api_urls_env.splitlines() if url.strip()]
+    if not api_urls:
+        print("⚠️ API_URL 为空，跳过")
+        return []
+
+    all_ips = []
+    for url in api_urls:
+        try:
+            print(f"从 API 获取 IP: {url}")
+            resp = requests.get(url, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        # 兼容可能的空格差异
+                        ip = item.get("IP 地址") or item.get("IP地址")
+                        if ip and isinstance(ip, str):
+                            ip = ip.strip()
+                            if ip:
+                                all_ips.append(ip)
+            else:
+                print(f"⚠️ API 返回不是列表: {type(data)}")
+
+        except Exception as e:
+            print(f"❌ 从 API 获取失败 {url}: {e}")
+
+    # 去重
+    all_ips = list(dict.fromkeys(all_ips))
+    print(f"✅ 从 API 获取到 {len(all_ips)} 个 IP")
+    return all_ips
 
 
 if __name__ == "__main__":
@@ -200,6 +237,7 @@ if __name__ == "__main__":
     sk = os.environ.get("HUAWEI_SECRET_KEY")
     region = os.environ.get("HUAWEI_REGION", "ap-southeast-1")
 
+    # 使用北京时间
     china_tz = timezone(timedelta(hours=8))
     now = datetime.now(china_tz).strftime("%Y/%m/%d %H:%M:%S")
 
@@ -220,58 +258,72 @@ if __name__ == "__main__":
     try:
         print(f"开始更新 DNS: {full_domain}")
 
+        # 初始化华为云 API
         hw = HuaWeiApi(ak, sk, region)
+
+        # 获取 Cloudflare IP（原有网页）
         full_data, best_ips = fetch_cloudflare_ips()
 
+        # 获取私有 API IP 并合并到默认线路
         api_ips = fetch_api_ips()
         if api_ips:
+            # 分离 IPv4 和 IPv6
             api_ipv4 = [ip for ip in api_ips if ":" not in ip]
             api_ipv6 = [ip for ip in api_ips if ":" in ip]
 
+            # 合并 IPv4 到默认线路
             if api_ipv4:
                 print(f"➕ 合并 {len(api_ipv4)} 个 IPv4 到默认线路")
                 combined = best_ips.get("默认", []) + api_ipv4
                 best_ips["默认"] = list(dict.fromkeys(combined))[:MAX_IP_PER_LINE]
 
+            # 合并 IPv6 到 IPv6 线路（如果有）
             if api_ipv6:
                 print(f"➕ 合并 {len(api_ipv6)} 个 IPv6 到 IPv6 线路")
                 combined_v6 = best_ips.get("IPv6", []) + api_ipv6
                 best_ips["IPv6"] = list(dict.fromkeys(combined_v6))[:MAX_IP_PER_LINE]
 
+            # 将 API 数据也记录到 full_data 中，便于查看
             if "API" not in full_data:
                 full_data["API"] = []
             full_data["API"].extend([{"IP": ip} for ip in api_ips])
 
+        # 统计更新信息
         update_summary = []
 
+        # 更新 IPv4
         for line in ["默认", "电信", "联通", "移动"]:
             ip_list = best_ips.get(line, [])
             if ip_list:
                 hw.set_records(full_domain, ip_list, record_type="A", line=line)
                 update_summary.append(f"{line} A记录: {len(ip_list)} 个IP")
 
+        # 更新 IPv6
         ip_list_v6 = best_ips.get("IPv6", [])
         if ip_list_v6:
             hw.set_records(full_domain, ip_list_v6, record_type="AAAA", line="默认")
             update_summary.append(f"IPv6 AAAA记录: {len(ip_list_v6)} 个IP")
 
+        # 保存 JSON
         with open("cloudflare_bestip.json", "w", encoding="utf-8") as f:
             json.dump({"最优IP": best_ips, "完整数据": full_data}, f, ensure_ascii=False, indent=4)
         print("JSON 文件保存到 cloudflare_bestip.json")
 
-        txt_lines = [now]
+        # 保存 TXT 文件（使用北京时间）
+        txt_lines = [now]  # 首行日期
 
         for line in ["默认", "电信", "联通", "移动", "IPv6"]:
             ip_list = best_ips.get(line, [])
             if not ip_list:
                 continue
             for ip in ip_list:
-                if ":" in ip:
+                if ":" in ip:  # IPv6
                     txt_lines.append(f"[{ip}]#{line}")
                 else:
                     txt_lines.append(f"{ip}#{line}")
-            txt_lines.append("")
+            txt_lines.append("")  # 每组之间空行
 
+        # 移除最后一个多余的空行（如果存在）
         if txt_lines and txt_lines[-1] == "":
             txt_lines.pop()
 
@@ -280,6 +332,7 @@ if __name__ == "__main__":
 
         print("TXT 文件保存到 cloudflare_bestip.txt")
 
+        # 发送成功通知
         success_msg = "\n".join(
             ["<b>✅ DNS 更新成功</b>", "", f"域名: {html.escape(full_domain)}"]
             + update_summary
@@ -292,6 +345,7 @@ if __name__ == "__main__":
         error_msg = str(e)
         print(f"❌ 错误: {error_msg}")
 
+        # 发送失败通知
         fail_msg = "\n".join([
             "<b>🚨 DNS 更新失败</b>",
             "",
