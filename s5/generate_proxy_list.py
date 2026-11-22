@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import socket
+import threading
 import requests
 from bs4 import BeautifulSoup, NavigableString
 import time
@@ -38,7 +40,7 @@ class ProxyListScraper:
         """
         tomcat_cred = os.environ.get('TOMCAT1235', '')
         if not tomcat_cred:
-            print("⚠️  未配置 TOMCAT1235 环境变量，将以未登录状态抓取（IP可能不完整）")
+            print("⚠️  未配置 TOMCAT1235 环境变量，将以未登录状态抓取（IP可能被脱敏）")
             return False
 
         if '-----' not in tomcat_cred:
@@ -123,28 +125,24 @@ class ProxyListScraper:
         if not td_element:
             return "未知", False
 
-        span = td_element.find('span')
-        if not span:
-            return "未知", False
-
         # 提取类型标签
         type_tag = ""
         is_residential = False
-        if span.find('span', class_='datacenter-tag'):
+        if td_element.find('span', class_='datacenter-tag'):
             type_tag = "[机房]"
-        elif span.find('span', class_='residential-tag'):
+        elif td_element.find('span', class_='residential-tag'):
             type_tag = "[家宽]"
             is_residential = True
 
         # 提取 fraud badge
         fraud_tag = ""
-        fraud_badge = span.find('span', class_='fraud-badge')
+        fraud_badge = td_element.find('span', class_='fraud-badge')
         if fraud_badge:
             fraud_tag = fraud_badge.get_text(strip=True)
 
         # 提取主要地理文本
         location = ""
-        flex_text_span = span.find('span', class_='flex-text')
+        flex_text_span = td_element.find('span', class_='flex-text')
         if flex_text_span:
             location = flex_text_span.get_text(strip=True)
 
@@ -154,17 +152,29 @@ class ProxyListScraper:
 
         return (full_location if full_location else "未知"), is_residential
 
-    def extract_ip_from_cell(self, ip_cell):
+    def extract_ip_from_cell(self, ip_cell, row=None):
         """
         从 IP 列单元格提取纯 IP 地址
-
-        HTML 结构:
-        <td>
-          <strong class="d-sm-none">socks5 </strong>   ← 跳过
-          8.217.6.165                                   ← 取这里
-          <span ...>:1080</span>                        ← 跳过
-        </td>
+        优先从整行或单元格的 data-ip 属性获取，其次通过正则匹配形如 115.77.X.244 或 1.2.3.4
         """
+        # 1. 尝试从复制按钮属性 data-ip 获取（最稳健）
+        if row:
+            btn = row.find(attrs={"data-ip": True})
+            if btn and btn.get('data-ip'):
+                return btn.get('data-ip').strip()
+
+        # 2. 从单元格自身寻找 data-ip
+        btn = ip_cell.find(attrs={"data-ip": True})
+        if btn and btn.get('data-ip'):
+            return btn.get('data-ip').strip()
+
+        # 3. 正则匹配提取 IP 字符串（支持掩码 X）
+        cell_text = ip_cell.get_text(separator=' ').strip()
+        match = re.search(r'(\d{1,3}\.\d{1,3}\.(?:[Xx]|\d{1,3})\.\d{1,3})', cell_text)
+        if match:
+            return match.group(1).strip()
+
+        # 4. 回退传统节点遍历
         ip = ""
         for node in ip_cell.children:
             if isinstance(node, NavigableString):
@@ -179,132 +189,30 @@ class ProxyListScraper:
 
         return ip
 
-    def parse_proxy_table(self, html_content):
+    def tcp_ping(self, ip, port, timeout=1.2):
         """
-        解析代理列表 HTML（4列: 类型 / IP / 端口 / 地理信息）
+        第一阶段快速预检：尝试建立 TCP 握手
+        绝大多数非真实 IP 不会开放该端口，能在 1 秒内超时/被拒绝
         """
-        soup = BeautifulSoup(html_content, 'html.parser')
-
-        table = soup.find('table')
-        if not table:
-            print("❌ 未找到代理数据表格")
-            debug_file = '/tmp/proxy_page_debug.html'
-            with open(debug_file, 'w', encoding='utf-8') as f:
-                f.write(html_content[:5000])
-            print(f"  页面前5000字符已保存到 {debug_file}")
-            return [], []
-
-        proxies_str  = []
-        all_proxies  = []
-        skipped_mask = 0
-
-        rows = table.find_all('tr')[1:]
-        print(f"  找到 {len(rows)} 行数据")
-
-        for i, row in enumerate(rows):
-            cells = row.find_all('td')
-            if len(cells) < 4:
-                continue
-
-            try:
-                # ── 列0: 协议类型 ──
-                protocol_badge = cells[0].find('span', class_='badge')
-                protocol = protocol_badge.get_text(strip=True).lower() if protocol_badge else "socks5"
-
-                # ── 列1: IP 地址 ──
-                ip = self.extract_ip_from_cell(cells[1])
-
-                # ── 列2: 端口 ──
-                port = cells[2].get_text(strip=True)
-
-                # ── 列3: 地理信息 + 时间戳 ──
-                location, is_residential = self.clean_location(cells[3])
-                time_span = cells[3].find('span', class_='text-muted')
-                timestamp = time_span.get_text(strip=True) if time_span else ""
-
-                # ── 基础验证 ──
-                if not protocol or not ip or not port:
-                    print(f"  ⚠️  第{i+1}行数据不完整: "
-                          f"protocol={protocol!r}, ip={ip!r}, port={port!r}")
-                    continue
-
-                # ── 掩码IP检测并跳过 ──
-                is_masked = bool(re.search(r'\.[Xx](\.|$)', ip))
-                if is_masked:
-                    skipped_mask += 1
-                    continue
-
-                # ── IP 格式验证 ──
-                if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
-                    print(f"  ⚠️  第{i+1}行 IP 格式异常，跳过: {ip!r}")
-                    continue
-
-                # ── 构造输出字符串 ──
-                proxy_str = f"{protocol}://{ip}:{port}"
-                if timestamp:
-                    proxy_str += f" [{timestamp}]"
-                if location:
-                    proxy_str += f" {location}"
-
-                proxies_str.append(proxy_str)
-                all_proxies.append({
-                    'protocol': protocol,
-                    'ip': ip,
-                    'port': port,
-                    'timestamp': timestamp,
-                    'location': location,
-                    'is_residential': is_residential,
-                })
-
-            except Exception as e:
-                print(f"  ⚠️  解析第{i+1}行出错: {e}")
-                continue
-
-        if skipped_mask:
-            print(f"  ⏭️  已过滤 {skipped_mask} 个掩码IP（未入库）")
-
-        return all_proxies, proxies_str
-
-    def scrape_proxy_list(self):
-        """先登录，再抓取完整代理列表"""
-        self.login()
-
         try:
-            print(f"\n📥 正在抓取代理列表: {self.proxy_list_url}")
-            response = self.session.get(self.proxy_list_url, timeout=30)
-            response.raise_for_status()
-            response.encoding = 'utf-8'
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            result = sock.connect_ex((ip, int(port)))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
 
-            all_proxies, proxies_str = self.parse_proxy_table(response.text)
-
-            if all_proxies:
-                resident_count = sum(1 for p in all_proxies if p['is_residential'])
-                print(f"✅ 成功抓取到 {len(proxies_str)} 个代理（掩码IP已过滤）")
-                print(f"   其中家宽: {resident_count} 个")
-
-            return all_proxies, proxies_str
-
-        except requests.RequestException as e:
-            print(f"❌ 网络请求错误: {e}")
-            return [], []
-        except Exception as e:
-            print(f"❌ 抓取错误: {e}")
-            import traceback
-            traceback.print_exc()
-            return [], []
-
-    def check_proxy_availability(self, proxy_info, timeout=10):
+    def check_proxy_availability(self, proxy_info, timeout=8):
         """
         检测代理可用性
-
         协议映射:
           socks5 / socks5h → socks5://ip:port
           socks4 / socks4a → socks4://ip:port
           http   / https   → http://ip:port
 
         探测目标: 自建 API https://mra8-api.hf.space/
-        返回 JSON 形如:
-          {"ip": "159.54.178.95", "as": {...}, "country": {...}, "regions": [...]}
+        返回 JSON 形如: {"ip": "159.54.178.95", ...}
         只要返回 200 且包含 ip 字段，即认为代理链路可用。
         """
         protocol = proxy_info['protocol']
@@ -338,14 +246,205 @@ class ProxyListScraper:
         except Exception:
             return False
 
+    def unmask_and_verify_ip(self, masked_proxy_info, max_workers=64):
+        """
+        对脱敏的掩码 IP（例如 115.77.X.244）猜测 X 从 1 到 255：
+        采用【二阶段快速检测】策略：
+          1. 阶段一：64 并发短超时 (1.2s) TCP 端口扫描，快速排除不通的候选；
+          2. 阶段二：对 TCP 连通的少数候选执行完整代理协议验证；
+          3. 发现可用代理后触发早停（Early Stop），快速返回真实 IP。
+        """
+        masked_ip = masked_proxy_info['ip']
+        port = masked_proxy_info['port']
+        protocol = masked_proxy_info['protocol']
+
+        # 检查是否包含 X 或 x
+        if not re.search(r'[Xx]', masked_ip):
+            return None
+
+        print(f"\n🔍 正在爆破破解脱敏 IP: {protocol}://{masked_ip}:{port} (遍历 X: 1~255)...")
+
+        found_real_info = None
+        stop_event = threading.Event()
+
+        # 生成 1~255 的候选 IP 列表
+        candidates = []
+        for octet in range(1, 256):
+            cand_ip = re.sub(r'[Xx]', str(octet), masked_ip, count=1)
+            candidates.append(cand_ip)
+
+        def _test_candidate(cand_ip):
+            if stop_event.is_set():
+                return None
+
+            # 阶段一：轻量 TCP 握手预检（避免发起慢速代理协议握手）
+            if not self.tcp_ping(cand_ip, port, timeout=1.2):
+                return None
+
+            if stop_event.is_set():
+                return None
+
+            # 阶段二：TCP 已通，进行完整代理协议校验
+            cand_info = dict(masked_proxy_info)
+            cand_info['ip'] = cand_ip
+            if self.check_proxy_availability(cand_info, timeout=6):
+                stop_event.set()
+                return cand_info
+            return None
+
+        start_time = time.time()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_ip = {executor.submit(_test_candidate, ip): ip for ip in candidates}
+            for future in concurrent.futures.as_completed(future_to_ip):
+                res = future.result()
+                if res and not found_real_info:
+                    found_real_info = res
+                    break
+
+        elapsed = time.time() - start_time
+        if found_real_info:
+            print(f"  🎯 成功破解！真实 IP 为: {found_real_info['ip']}:{port} (耗时 {elapsed:.2f}s)")
+            return found_real_info
+        else:
+            print(f"  ⚠️  未能爆破出有效 IP (可能节点已下线，耗时 {elapsed:.2f}s)")
+            return None
+
+    def parse_proxy_table(self, html_content):
+        """
+        解析代理列表 HTML（4列: 类型 / IP / 端口 / 地理信息）
+        并对脱敏的掩码 IP（如 115.77.X.244）进行猜测爆破还原
+        """
+        soup = BeautifulSoup(html_content, 'html.parser')
+
+        table = soup.find('table')
+        if not table:
+            print("❌ 未找到代理数据表格")
+            debug_file = '/tmp/proxy_page_debug.html'
+            try:
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(html_content[:5000])
+                print(f"  页面前5000字符已保存到 {debug_file}")
+            except Exception:
+                pass
+            return [], []
+
+        raw_items = []
+        rows = table.find_all('tr')[1:]
+        print(f"  找到 {len(rows)} 行网页数据")
+
+        for i, row in enumerate(rows):
+            cells = row.find_all('td')
+            if len(cells) < 4:
+                continue
+
+            try:
+                # ── 列0: 协议类型 ──
+                protocol_badge = cells[0].find('span', class_='badge')
+                protocol = protocol_badge.get_text(strip=True).lower() if protocol_badge else "socks5"
+
+                # ── 列1: IP 地址 ──
+                ip = self.extract_ip_from_cell(cells[1], row=row)
+
+                # ── 列2: 端口 ──
+                port = cells[2].get_text(strip=True)
+
+                # ── 列3: 地理信息 + 时间戳 ──
+                location, is_residential = self.clean_location(cells[3])
+                time_span = cells[3].find('span', class_='text-muted')
+                timestamp = time_span.get_text(strip=True) if time_span else ""
+
+                if not protocol or not ip or not port:
+                    continue
+
+                raw_items.append({
+                    'protocol': protocol,
+                    'ip': ip,
+                    'port': port,
+                    'timestamp': timestamp,
+                    'location': location,
+                    'is_residential': is_residential,
+                })
+
+            except Exception as e:
+                print(f"  ⚠️  解析第{i+1}行出错: {e}")
+                continue
+
+        all_proxies = []
+        proxies_str = []
+        masked_count = 0
+        unmasked_success = 0
+
+        for item in raw_items:
+            ip = item['ip']
+            is_masked = bool(re.search(r'\.[Xx](\.|$)', ip))
+
+            if is_masked:
+                masked_count += 1
+                # 执行 1~255 爆破测试
+                real_info = self.unmask_and_verify_ip(item, max_workers=64)
+                if real_info:
+                    unmasked_success += 1
+                    all_proxies.append(real_info)
+                    
+                    p_str = f"{real_info['protocol']}://{real_info['ip']}:{real_info['port']}"
+                    if real_info['timestamp']:
+                        p_str += f" [{real_info['timestamp']}]"
+                    if real_info['location']:
+                        p_str += f" {real_info['location']}"
+                    proxies_str.append(p_str)
+            else:
+                # 格式验证
+                if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
+                    print(f"  ⚠️  IP 格式异常，跳过: {ip!r}")
+                    continue
+
+                all_proxies.append(item)
+                p_str = f"{item['protocol']}://{item['ip']}:{item['port']}"
+                if item['timestamp']:
+                    p_str += f" [{item['timestamp']}]"
+                if item['location']:
+                    p_str += f" {item['location']}"
+                proxies_str.append(p_str)
+
+        print(f"\n📊 统计: 共识别到 {masked_count} 个掩码脱敏 IP，成功爆破还原出 {unmasked_success} 个真实可用代理。")
+        return all_proxies, proxies_str
+
+    def scrape_proxy_list(self):
+        """先登录，再抓取完整代理列表并还原掩码"""
+        self.login()
+
+        try:
+            print(f"\n📥 正在抓取代理列表: {self.proxy_list_url}")
+            response = self.session.get(self.proxy_list_url, timeout=30)
+            response.raise_for_status()
+            response.encoding = 'utf-8'
+
+            all_proxies, proxies_str = self.parse_proxy_table(response.text)
+
+            if all_proxies:
+                resident_count = sum(1 for p in all_proxies if p['is_residential'])
+                print(f"✅ 成功获取 {len(proxies_str)} 个代理")
+                print(f"   其中家宽: {resident_count} 个")
+
+            return all_proxies, proxies_str
+
+        except requests.RequestException as e:
+            print(f"❌ 网络请求错误: {e}")
+            return [], []
+        except Exception as e:
+            print(f"❌ 抓取错误: {e}")
+            import traceback
+            traceback.print_exc()
+            return [], []
+
     def check_all_proxies(self, proxy_list, max_workers=20):
-        """并发检测所有代理可用性"""
+        """并发检测所有未验证或全部代理的可用性"""
         if not proxy_list:
             print("没有代理需要检测")
             return []
 
         print(f"\n{'='*50}")
-        print(f"开始检测 {len(proxy_list)} 个代理的可用性（探测源: {self.probe_url}）...")
+        print(f"开始最终核验 {len(proxy_list)} 个代理的连通性（探测源: {self.probe_url}）...")
         print(f"{'='*50}")
 
         alive_proxies = []
@@ -465,8 +564,8 @@ def main():
 
     if all_proxies:
         scraper.save_to_file(proxies_str)
+        # 对全部收集到的代理统一核验
         alive_proxies = scraper.check_all_proxies(all_proxies)
-        # 无论是否有可用代理都写 alive.txt（空列表也写空文件，避免旧数据残留）
         scraper.save_alive_proxies(alive_proxies, filename='alive.txt')
         scraper.send_telegram_notification(alive_proxies)
         print("\n✅ 代理列表处理完成！")
