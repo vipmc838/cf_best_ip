@@ -512,7 +512,7 @@ class ProxyListScraper:
             return False
 
     def send_telegram_notification(self, alive_proxies):
-        """发送 Telegram 通知（最多显示前10个）"""
+        """发送 Telegram 通知（单条消息完整展示所有可用代理）"""
         if not self.tg_bot_token or not self.tg_user_id:
             print("未配置TG_BOT_TOKEN或TG_USER_ID，跳过Telegram通知")
             return False
@@ -526,13 +526,10 @@ class ProxyListScraper:
             total   = len(alive_proxies)
             message = f"🌐 <b>可用代理</b> | {current_time} | 共{total}个\n\n"
 
-            for proxy in alive_proxies[:10]:
+            for proxy in alive_proxies:
                 proxy_url = f"{proxy['protocol']}://{proxy['ip']}:{proxy['port']}"
                 message  += f"<code>{proxy_url}</code>\n"
                 message  += f"└ {proxy['location']}\n"
-
-            if total > 10:
-                message += f"\n... 等共 {total} 个代理"
 
             url     = f"https://api.telegram.org/bot{self.tg_bot_token}/sendMessage"
             payload = {
@@ -547,7 +544,7 @@ class ProxyListScraper:
             result = resp.json()
 
             if result.get('ok'):
-                print(f"✅ Telegram通知发送成功，共 {total} 个可用代理")
+                print(f"✅ Telegram通知发送成功，共 {total} 个可用代理（单条消息）")
                 return True
             else:
                 print(f"❌ Telegram通知发送失败: {result}")
